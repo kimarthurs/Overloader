@@ -5,12 +5,9 @@ import {
   Tooltip, Legend, ResponsiveContainer
 } from "recharts";
 
-const API = "http://168.107.25.122:8000";
+const API = process.env.REACT_APP_API_URL;
 
-const CATEGORY_EMOJI = {
-  '등': '🔙', '가슴': '💪', '어깨': '🤸',
-  '하체': '🦵', '코어': '🧘', '기타': '❓',
-};
+
 
 export default function App() {
   const [volume, setVolume] = useState([]);
