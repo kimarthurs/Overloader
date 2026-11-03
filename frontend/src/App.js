@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
 import {
@@ -6,15 +6,10 @@ import {
   Tooltip, Legend, ResponsiveContainer,
   LineChart, Line
 } from "recharts";
+import { initAuthSession, performLogout, registerLogoutCallback } from "./auth";
 
 const API = process.env.REACT_APP_API_URL;
 const GOOGLE_CLIENT_ID = "907903471313-hrjku47jnpcgqktsp3vhfsq5846iutkb.apps.googleusercontent.com";
-
-axios.interceptors.request.use(config => {
-  const token = localStorage.getItem("token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
 
 // ── 공통 스타일 (CSS 변수 사용) ──
 const S = {
@@ -2891,8 +2886,7 @@ function LoginScreen({ onLogin }) {
           const res = await axios.post(`${API}/auth/google`, {
             access_token: credentialResponse.credential, is_id_token: true
           });
-          localStorage.setItem("token", res.data.token);
-          localStorage.setItem("userName", res.data.name);
+          initAuthSession(res.data.token, res.data.name);
           onLogin(res.data);
         }}
         onError={() => alert("로그인 실패")}
@@ -2919,10 +2913,36 @@ export default function App() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
 
+  const clearAppState = useCallback(() => {
+    setUser(null);
+    setWorkoutDates([]);
+    setStrengthDates([]);
+    setCardioDates([]);
+    setSelectedDate(null);
+    setDayLogs([]);
+    setTab("record");
+  }, []);
+
+  useEffect(() => {
+    registerLogoutCallback(clearAppState);
+  }, [clearAppState]);
+
   useEffect(() => {
     const token = localStorage.getItem("token");
     const name = localStorage.getItem("userName");
-    if (token) setUser({ token, name });
+    if (token) {
+      initAuthSession(token, name);
+      setUser({ token, name });
+    }
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    performLogout({ expired: false });
+  }, []);
+
+  const handleLogin = useCallback((data) => {
+    initAuthSession(data.token, data.name);
+    setUser(data);
   }, []);
 
   useEffect(() => {
@@ -2932,18 +2952,13 @@ export default function App() {
         setWorkoutDates(res.data.dates || []);
         setStrengthDates(res.data.strength_dates || []);
         setCardioDates(res.data.cardio_dates || []);
-      });
+      })
+      .catch(() => {});
   }, [calMonth, user]);
 
   const handleSelectDate = (dateStr) => {
     setSelectedDate(dateStr);
     axios.get(`${API}/logs?date_str=${dateStr}`).then(res => setDayLogs(res.data));
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userName");
-    setUser(null);
   };
 
   const groupedLogs = dayLogs.reduce((acc, row) => {
@@ -2963,7 +2978,7 @@ export default function App() {
   if (!user) {
     return (
       <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-        <LoginScreen onLogin={(data) => setUser(data)} />
+        <LoginScreen onLogin={handleLogin} />
       </GoogleOAuthProvider>
     );
   }
@@ -2989,7 +3004,33 @@ export default function App() {
               style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 8 }} />
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: "800", color: "var(--text)" }}>Overloader</h1>
           </div>
-          {user.name && <span style={{ fontSize: 13, color: "var(--sub)" }}>👤 {user.name}</span>}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {user.name && (
+              <span style={{
+                fontSize: 13,
+                color: "var(--sub)",
+                maxWidth: 110,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}>
+                👤 {user.name}
+              </span>
+            )}
+            <button
+              onClick={handleLogout}
+              style={{
+                ...S.btnGhost,
+                padding: "5px 10px",
+                fontSize: 12,
+                borderRadius: 8,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              로그아웃
+            </button>
+          </div>
         </div>
 
         {/* 콘텐츠 */}
