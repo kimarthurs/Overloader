@@ -45,3 +45,4 @@ Thumbs.db
 # 로컬 유지 및 업로드 제외 파일
 /frontend/SELECT tablename.sql
 /GEMINI.md.txt
+backup/

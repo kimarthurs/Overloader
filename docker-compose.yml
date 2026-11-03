@@ -1,0 +1,32 @@
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: overloader-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: overloader-bot
+    restart: unless-stopped
+    command: ["python", "bot.py"]
+    env_file:
+      - .env
+    profiles:
+      - bot
+    depends_on:
+      api:
+        condition: service_healthy

@@ -1,3 +1,4 @@
+import os
 import requests
 
 ADMIN_DISCORD_WEBHOOK = os.getenv("ADMIN_DISCORD_WEBHOOK")

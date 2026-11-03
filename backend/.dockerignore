@@ -1,0 +1,42 @@
+# 환경변수 및 인증 정보 (예외: .env.example 허용)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+token.json
+service-account*.json
+
+# Git
+.git
+.gitignore
+
+# Python 캐시 및 가상환경
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# 백업 및 임시 파일
+backup/
+backups/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql
+*.sql.gz
+
+# IDE 및 OS 임시 파일
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.gemini/

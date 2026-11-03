@@ -10,6 +10,9 @@ import matplotlib.dates as mdates
 from matplotlib import font_manager
 import io
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
 import psycopg2
@@ -523,7 +526,7 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     code = context.args[0]
     chat_id = update.effective_chat.id
-    res = requests.post("https://api.overloader.cloud/settings/link-telegram",
+    res = requests.post(f"{os.getenv('API_BASE_URL', 'https://api.overloader.cloud')}/settings/link-telegram",
                         json={"code": code, "chat_id": chat_id})
     if res.status_code == 200:
         await update.message.reply_text("✅ 연결 완료! 이제 웹에서 기록하면 알림이 와요.")
