@@ -1,0 +1,47 @@
+# 환경변수 및 인증 정보
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+token.json
+service-account*.json
+
+# Node / Python 의존성
+node_modules/
+.venv/
+venv/
+env/
+
+# 빌드 및 캐시
+build/
+dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+coverage/
+
+# 로그 및 로컬 데이터
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+
+# 백업 / 로컬 도구 설정
+backups/
+.gemini/
+.vscode/
+.idea/
+
+# OS 임시 파일
+.DS_Store
+Thumbs.db
+
+# 로컬 유지 및 업로드 제외 파일
+/frontend/SELECT tablename.sql
+/GEMINI.md.txt

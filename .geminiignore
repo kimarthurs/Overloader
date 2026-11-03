@@ -1,0 +1,22 @@
+# 의존성 및 가상환경
+node_modules/
+.venv/
+venv/
+
+# 빌드 및 캐시
+build/
+dist/
+__pycache__/
+.pytest_cache/
+coverage/
+
+# 로그
+*.log
+
+# 비밀키 및 환경변수
+.env
+.env.*
+!.env.example
+
+# 버전 관리 내부 파일
+.git/
