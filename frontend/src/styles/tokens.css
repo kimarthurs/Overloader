@@ -197,3 +197,84 @@
 .btn-ghost:hover {
   background-color: var(--card-subtle);
 }
+
+/* ── 기록 화면 (Record Screen) 스타일 ── */
+.record-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 900px) {
+  .record-grid {
+    grid-template-columns: 1.1fr 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+}
+
+.record-input {
+  width: 100%;
+  padding: 12px 14px;
+  background-color: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  color: var(--text);
+  font-size: 14px;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+
+.record-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.record-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background-color: var(--card-subtle);
+  color: var(--sub);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.record-chip:hover {
+  color: var(--text);
+  border-color: var(--border-focus);
+}
+
+.record-chip.active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.record-set-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background-color: var(--card-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  transition: all 0.2s;
+}
+
+.record-set-item:hover {
+  border-color: var(--border-focus);
+}
+
+.record-set-item.highlight {
+  border-color: var(--accent);
+  background-color: var(--accent-bg);
+  transform: scale(1.01);
+}
+
