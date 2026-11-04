@@ -10,6 +10,7 @@ import { initAuthSession, performLogout, registerLogoutCallback } from "./auth";
 import AppShell from "./components/layout/AppShell";
 import HomeScreen from "./components/home/HomeScreen";
 import RecordScreen from "./components/record/RecordScreen";
+import CalendarScreen from "./components/calendar/CalendarScreen";
 
 const API = process.env.REACT_APP_API_URL;
 const GOOGLE_CLIENT_ID = "907903471313-hrjku47jnpcgqktsp3vhfsq5846iutkb.apps.googleusercontent.com";
@@ -75,129 +76,7 @@ function useTheme() {
   return { theme, toggle };
 }
 
-// ── 달력 컴포넌트 (고정 높이) ──
-function Calendar({ workoutDates, strengthDates, cardioDates, onSelectDate, selectedDate, onMonthChange }) {
-  const [viewMonth, setViewMonth] = useState(() => {
-    const d = new Date();
-    return { year: d.getFullYear(), month: d.getMonth() };
-  });
-  const { year, month } = viewMonth;
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
-
-  const navigate = (dir) => {
-    setViewMonth(v => {
-      const d = new Date(v.year, v.month + dir);
-      const next = { year: d.getFullYear(), month: d.getMonth() };
-      onMonthChange?.(`${next.year}-${String(next.month + 1).padStart(2, "0")}`);
-      return next;
-    });
-  };
-
-  const days = [];
-  for (let i = 0; i < firstDay; i++) days.push(null);
-  for (let i = 1; i <= daysInMonth; i++) days.push(i);
-  // 항상 42칸(6주)으로 고정 → 데이터 로드 전후 레이아웃 안 변함
-  while (days.length < 42) days.push(null);
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <button onClick={() => navigate(-1)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--text)", padding: "0 12px" }}>‹</button>
-        <span style={{ fontWeight: "700", fontSize: 17, color: "var(--text)" }}>{year}년 {month + 1}월</span>
-        <button onClick={() => navigate(1)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "var(--text)", padding: "0 12px" }}>›</button>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", marginBottom: 6 }}>
-        {["일","월","화","수","목","금","토"].map((d, i) => (
-          <div key={d} style={{ fontSize: 12, fontWeight: "600", padding: "4px 0",
-            color: i === 0 ? "#ef4444" : i === 6 ? "var(--accent)" : "var(--sub)" }}>{d}</div>
-        ))}
-      </div>
-      {/* 고정 높이: 6행 × 40px + 5 gap = 245px */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, minHeight: 245 }}>
-        {days.map((day, i) => {
-          if (!day) return <div key={i} style={{ height: 40 }} />;
-          const dateStr = `${monthStr}-${String(day).padStart(2, "0")}`;
-          const hasWorkout = workoutDates.includes(dateStr);
-          const isSelected = selectedDate === dateStr;
-          const isToday = dateStr === new Date().toISOString().slice(0, 10);
-          return (
-            <div key={i} onClick={() => hasWorkout && onSelectDate(dateStr)}
-              style={{
-                height: 40,
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                borderRadius: 10,
-                cursor: hasWorkout ? "pointer" : "default",
-                background: isSelected ? "var(--accent)" : "transparent",
-                color: isSelected ? "white" : isToday ? "var(--accent)" : "var(--text)",
-                fontWeight: isToday || isSelected ? "700" : "400",
-                fontSize: 14,
-              }}>
-              {day}
-              {/* 운동 점 표시 */}
-              {!isSelected && (strengthDates.includes(dateStr) || cardioDates.includes(dateStr)) && (
-                <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
-                  {strengthDates.includes(dateStr) && (
-                    <div style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)" }} />
-                  )}
-                  {cardioDates.includes(dateStr) && (
-                    <div style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--success)" }} />
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── 특정 날짜 유산소 기록 표시 ──
-function CardioLogsForDate({ date }) {
-  const [logs, setLogs] = useState([]);
-
-  useEffect(() => {
-    if (!date) return;
-    axios.get(`${API}/cardio?date_str=${date}`).then(res => setLogs(res.data));
-  }, [date]);
-
-  if (logs.length === 0) return (
-    <div style={{ color: "var(--sub)", fontSize: 14, marginTop: 8 }}>유산소 기록 없음</div>
-  );
-
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div style={{ fontWeight: "700", marginBottom: 10, color: "var(--success)", fontSize: 15 }}>
-        🏃 유산소
-      </div>
-      {logs.map((log, i) => (
-        <div key={i} style={{
-          background: "var(--input-bg)", borderRadius: 10, padding: "12px 14px",
-          marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center"
-        }}>
-          <div>
-            <span style={{ fontWeight: "600", color: "var(--text)" }}>{log.cardio_name}</span>
-            <div style={{ fontSize: 13, color: "var(--sub)", marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}>
-              {log.duration_min && <span>⏱ {log.duration_min}분</span>}
-              {log.distance_km  && <span>📍 {log.distance_km}km</span>}
-              {log.pace         && <span>🔥 {log.pace}/km</span>}
-              {log.incline      && <span>📐 경사 {log.incline}%</span>}
-              {log.kcal         && <span>🔥 {log.kcal}kcal</span>}
-              {log.memo         && <span>💬 {log.memo}</span>}
-            </div>
-          </div>
-          <button onClick={async () => {
-            if (!window.confirm("삭제할까요?")) return;
-            await axios.delete(`${API}/cardio/${log.id}`);
-            axios.get(`${API}/cardio?date_str=${date}`).then(res => setLogs(res.data));
-          }} style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: 16, flexShrink: 0 }}>✕</button>
-        </div>
-      ))}
-    </div>
-  );
-}
+// ── 달력 및 날짜별 유산소: CalendarScreen 컴포넌트로 분리됨 (src/components/calendar/CalendarScreen.jsx) ──
 
 
 // ── 운동 기록 입력 폼 (근력 + 유산소): RecordScreen 컴포넌트로 분리됨 (src/components/record/RecordScreen.jsx) ──
@@ -2354,23 +2233,8 @@ export default function App() {
   const [subAnalyze, setSubAnalyze] = useState("volume");
   const [subPlan, setSubPlan] = useState("routine");
   const [subHealth, setSubHealth] = useState("body");
-  const [workoutDates, setWorkoutDates] = useState([]);
-  const [strengthDates, setStrengthDates] = useState([]);
-  const [cardioDates, setCardioDates] = useState([]); 
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [dayLogs, setDayLogs] = useState([]);
-  const [calMonth, setCalMonth] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  });
-
   const clearAppState = useCallback(() => {
     setUser(null);
-    setWorkoutDates([]);
-    setStrengthDates([]);
-    setCardioDates([]);
-    setSelectedDate(null);
-    setDayLogs([]);
     setTab("home");
   }, []);
 
@@ -2407,27 +2271,6 @@ export default function App() {
     setUser(data);
   }, []);
 
-  useEffect(() => {
-    if (!user) return;
-    axios.get(`${API}/logs?month=${calMonth}`)
-      .then(res => {
-        setWorkoutDates(res.data.dates || []);
-        setStrengthDates(res.data.strength_dates || []);
-        setCardioDates(res.data.cardio_dates || []);
-      })
-      .catch(() => {});
-  }, [calMonth, user]);
-
-  const handleSelectDate = (dateStr) => {
-    setSelectedDate(dateStr);
-    axios.get(`${API}/logs?date_str=${dateStr}`).then(res => setDayLogs(res.data));
-  };
-
-  const groupedLogs = dayLogs.reduce((acc, row) => {
-    if (!acc[row.workout_name]) acc[row.workout_name] = [];
-    acc[row.workout_name].push(row);
-    return acc;
-  }, {});
 
   if (!user) {
     return (
@@ -2454,104 +2297,11 @@ export default function App() {
         )}
 
         {tab === "record" && (
-          <RecordScreen onSaved={() => {
-            axios.get(`${API}/logs?month=${calMonth}`)
-              .then(res => {
-                setWorkoutDates(res.data.dates || []);
-                setStrengthDates(res.data.strength_dates || []);
-                setCardioDates(res.data.cardio_dates || []);
-              });
-          }} />
+          <RecordScreen />
         )}
 
         {tab === "calendar" && (
-          <div>
-            <div style={S.card}>
-              <Calendar
-                workoutDates={workoutDates}
-                strengthDates={strengthDates}
-                cardioDates={cardioDates}
-                selectedDate={selectedDate}
-                onSelectDate={handleSelectDate}
-                onMonthChange={setCalMonth}
-              />
-            </div>
-            {selectedDate && (
-              <div style={S.card}>
-                <p style={S.sectionTitle}>📋 {selectedDate} 운동 기록</p>
-
-                {/* 근력 */}
-                {Object.keys(groupedLogs).length > 0 ? (
-                  Object.entries(groupedLogs).map(([name, sets]) => (
-                    <div key={name} style={{ marginBottom: 20 }}>
-                      <div style={{ fontWeight: "700", marginBottom: 8, color: "var(--accent)", fontSize: 15 }}>{name}</div>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14, tableLayout: "fixed" }}>
-                        <thead>
-                          <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                            <th style={S.th}>세트</th><th style={S.th}>무게</th><th style={S.th}>횟수</th><th style={{ ...S.th, width: 36 }}></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {sets.map((s, i) => {
-                            const setNumber =
-                              sets
-                                .slice(0, i + 1)
-                                .filter(x => x.workoutName === s.workoutName)
-                                .length;
-
-                            return (
-                              <tr
-                                key={i}
-                                style={{
-                                  borderBottom: "1px solid var(--border)"
-                                }}
-                              >
-                                <td style={S.td}>
-                                  {s.workoutName}
-                                  <div
-                                    style={{
-                                      fontSize: 12,
-                                      color: "var(--sub)",
-                                      marginTop: 2
-                                    }}
-                                  >
-                                    {s.setType === "drop"
-                                      ? "🔻 DROP"
-                                      : `${setNumber}set`}
-                                  </div>
-                                </td>
-
-                                <td style={S.td}>
-                                  {s.weight_kg} kg
-                                </td>
-
-                                <td style={S.td}>
-                                  {s.reps}회
-                                </td>
-
-                                <td style={S.td}>
-                                  <button onClick={async () => {
-                                  if (!window.confirm("이 세트를 삭제할까요?")) return;
-                                  await axios.delete(`${API}/logs/${s.id}`);
-                                  handleSelectDate(selectedDate);
-                                }} style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: 16 }}>✕</button>
-
-                              </td>
-                            </tr>
-                          )})}
-                        </tbody>
-                      </table>
-                    </div>
-                  ))
-                ) : (
-                  <div style={{ color: "var(--sub)", marginBottom: 16 }}>근력 기록 없음</div>
-                )}
-
-                {/* 유산소 */}
-                <CardioLogsForDate date={selectedDate} />
-              </div>
-            )}
-          </div>
+          <CalendarScreen onNavigateTab={setTab} />
         )}
 
         {tab === "analyze" && (

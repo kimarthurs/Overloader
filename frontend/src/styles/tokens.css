@@ -278,3 +278,53 @@
   transform: scale(1.01);
 }
 
+/* ── 달력 화면 (Calendar Screen) 스타일 ── */
+.calendar-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 900px) {
+  .calendar-layout {
+    grid-template-columns: 1.15fr 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+}
+
+.calendar-cell {
+  height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-inner);
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+  font-size: 14px;
+  user-select: none;
+}
+
+.calendar-cell:hover:not(.empty) {
+  background-color: var(--card-subtle);
+}
+
+.calendar-cell.selected {
+  background-color: var(--accent) !important;
+  color: #ffffff !important;
+  font-weight: 700;
+}
+
+.calendar-cell.today:not(.selected) {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.calendar-cell.empty {
+  cursor: default;
+}
+
+
