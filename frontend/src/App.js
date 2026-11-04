@@ -7,6 +7,8 @@ import {
   LineChart, Line
 } from "recharts";
 import { initAuthSession, performLogout, registerLogoutCallback } from "./auth";
+import AppShell from "./components/layout/AppShell";
+import HomeScreen from "./components/home/HomeScreen";
 
 const API = process.env.REACT_APP_API_URL;
 const GOOGLE_CLIENT_ID = "907903471313-hrjku47jnpcgqktsp3vhfsq5846iutkb.apps.googleusercontent.com";
@@ -2721,34 +2723,28 @@ function MealTab() {
 }
 
 // ── 설정 탭 ──
-function SettingsTab({ theme, onToggleTheme, onLogout, userName }) {
+function SettingsTab({ theme, onToggleTheme, onLogout, userName, showLastWorkout, onToggleShowLastWorkout }) {
   const [settings, setSettings] = useState(null);
-  const [linkCode, setLinkCode] = useState(null);
-  const [discordUrl, setDiscordUrl] = useState("");
-  const [msg, setMsg] = useState("");
 
   useEffect(() => {
     axios.get(`${API}/settings`).then(res => {
       setSettings(res.data);
-      setDiscordUrl(res.data.discord_webhook_url || "");
     });
   }, []);
 
-  const generateCode = async () => {
-    const res = await axios.post(`${API}/settings/link-code`);
-    setLinkCode(res.data.code);
-  };
-
-  const saveDiscord = async () => {
-    await axios.post(`${API}/settings/discord`, { webhook_url: discordUrl });
-    setMsg("✅ 저장 완료!");
-    setTimeout(() => setMsg(""), 3000);
-  };
-
   if (!settings) return <div style={{ color: "var(--sub)" }}>로딩 중...</div>;
+
+  const isEnabled = showLastWorkout !== undefined ? showLastWorkout : (settings.show_last_workout ?? true);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {/* 계정 */}
+      <div style={S.card}>
+        <p style={{ fontWeight: "700", marginBottom: 12, marginTop: 0, color: "var(--text)" }}>👤 계정</p>
+        <p style={{ color: "var(--sub)", fontSize: 14, marginBottom: 14, marginTop: 0 }}>{userName}</p>
+        <button onClick={onLogout} style={{ ...S.btnGhost, width: "100%" }}>로그아웃</button>
+      </div>
 
       {/* 다크모드 토글 */}
       <div style={S.card}>
@@ -2776,45 +2772,7 @@ function SettingsTab({ theme, onToggleTheme, onLogout, userName }) {
         </div>
       </div>
 
-      {/* 계정 */}
-      <div style={S.card}>
-        <p style={{ fontWeight: "700", marginBottom: 12, marginTop: 0, color: "var(--text)" }}>👤 계정</p>
-        <p style={{ color: "var(--sub)", fontSize: 14, marginBottom: 14, marginTop: 0 }}>{userName}</p>
-        <button onClick={onLogout} style={{ ...S.btnGhost, width: "100%" }}>로그아웃</button>
-      </div>
-
-      {/* 텔레그램 */}
-      <div style={S.card}>
-        <p style={{ fontWeight: "700", marginBottom: 4, marginTop: 0, color: "var(--text)" }}>📱 텔레그램 연결</p>
-        <p style={{ color: "var(--sub)", fontSize: 14, marginBottom: 14, marginTop: 0 }}>공용 봇에서 /link 코드 를 입력하면 연결돼요.</p>
-        {settings.telegram_connected ? (
-          <div style={{ color: "var(--success)", fontWeight: "700" }}>✅ 텔레그램 연결됨</div>
-        ) : (
-          <div>
-            <button onClick={generateCode} style={{ ...S.btn(), width: "100%" }}>🔑 연결 코드 발급</button>
-            {linkCode && (
-              <div style={{ marginTop: 14, padding: 16, background: "var(--bg)", borderRadius: 10, border: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 13, color: "var(--sub)", marginBottom: 8 }}>텔레그램 봇에서 입력 (10분 유효):</div>
-                <div style={{ fontSize: 22, fontWeight: "700", letterSpacing: 4, color: "var(--accent)", textAlign: "center" }}>
-                  /link {linkCode}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 디스코드 */}
-      <div style={S.card}>
-        <p style={{ fontWeight: "700", marginBottom: 4, marginTop: 0, color: "var(--text)" }}>🎮 디스코드 웹훅</p>
-        <p style={{ color: "var(--sub)", fontSize: 14, marginBottom: 14, marginTop: 0 }}>채널 설정 → 연동 → 웹후크에서 URL 복사</p>
-        <input placeholder="https://discord.com/api/webhooks/..." value={discordUrl}
-          onChange={e => setDiscordUrl(e.target.value)} style={{ ...S.input, marginBottom: 10 }} />
-        <button onClick={saveDiscord} style={{ ...S.btn("#5865F2"), width: "100%" }}>💾 저장</button>
-        {msg && <div style={{ marginTop: 10, color: "var(--success)", fontWeight: "700" }}>{msg}</div>}
-      </div>
-
-            {/* 홈 최근 운동 표시 */}
+      {/* 홈 최근 운동 표시 */}
       <div style={S.card}>
         <p style={{
           fontWeight: "700",
@@ -2849,16 +2807,19 @@ function SettingsTab({ theme, onToggleTheme, onLogout, userName }) {
 
           <input
             type="checkbox"
-            checked={settings.show_last_workout ?? true}
+            checked={isEnabled}
 
             onChange={async (e) => {
-
               const enabled = e.target.checked;
 
               setSettings({
                 ...settings,
                 show_last_workout: enabled
               });
+
+              if (onToggleShowLastWorkout) {
+                onToggleShowLastWorkout(enabled);
+              }
 
               await axios.post(
                 `${API}/settings/last-workout?enabled=${enabled}`
@@ -2899,7 +2860,8 @@ function LoginScreen({ onLogin }) {
 export default function App() {
   const { theme, toggle: toggleTheme } = useTheme();
   const [user, setUser] = useState(null);
-  const [tab, setTab] = useState("record");
+  const [tab, setTab] = useState("home");
+  const [showLastWorkout, setShowLastWorkout] = useState(true);
   const [subAnalyze, setSubAnalyze] = useState("volume");
   const [subPlan, setSubPlan] = useState("routine");
   const [subHealth, setSubHealth] = useState("body");
@@ -2920,7 +2882,7 @@ export default function App() {
     setCardioDates([]);
     setSelectedDate(null);
     setDayLogs([]);
-    setTab("record");
+    setTab("home");
   }, []);
 
   useEffect(() => {
@@ -2935,6 +2897,17 @@ export default function App() {
       setUser({ token, name });
     }
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    axios.get(`${API}/settings`)
+      .then(res => {
+        if (res.data && typeof res.data.show_last_workout === "boolean") {
+          setShowLastWorkout(res.data.show_last_workout);
+        }
+      })
+      .catch(() => {});
+  }, [user]);
 
   const handleLogout = useCallback(() => {
     performLogout({ expired: false });
@@ -2967,14 +2940,6 @@ export default function App() {
     return acc;
   }, {});
 
-  const mainTabs = [
-    { id: "record",   icon: "✏️", label: "기록" },
-    { id: "calendar", icon: "📅", label: "달력" },
-    { id: "analyze",  icon: "📊", label: "분석" },
-    { id: "health",   icon: "💪", label: "건강" },  // ← plan → health
-    { id: "settings", icon: "⚙️", label: "설정" },
-  ];
-
   if (!user) {
     return (
       <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
@@ -2985,254 +2950,184 @@ export default function App() {
 
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <div style={{
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-        maxWidth: 680, margin: "0 auto",
-        background: "var(--bg)", minHeight: "100vh",
-        paddingBottom: "calc(70px + env(safe-area-inset-bottom))",
-      }}>
-        {/* 헤더 */}
-        <div style={{
-          padding: "16px 20px 12px",
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--card)",
-          position: "sticky", top: 0, zIndex: 10,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <img src="/logo.png" alt="logo"
-              style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 8 }} />
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: "800", color: "var(--text)" }}>Overloader</h1>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {user.name && (
-              <span style={{
-                fontSize: 13,
-                color: "var(--sub)",
-                maxWidth: 110,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}>
-                👤 {user.name}
-              </span>
-            )}
-            <button
-              onClick={handleLogout}
-              style={{
-                ...S.btnGhost,
-                padding: "5px 10px",
-                fontSize: 12,
-                borderRadius: 8,
-                cursor: "pointer",
-                whiteSpace: "nowrap",
-              }}
-            >
-              로그아웃
-            </button>
-          </div>
-        </div>
+      <AppShell
+        currentTab={tab}
+        onTabChange={setTab}
+        userName={user.name}
+        onLogout={handleLogout}
+      >
+        {tab === "home" && (
+          <HomeScreen
+            userName={user.name}
+            onNavigateTab={setTab}
+            showLastWorkout={showLastWorkout}
+          />
+        )}
 
-        {/* 콘텐츠 */}
-        <div style={{ padding: "20px 16px" }}>
+        {tab === "record" && (
+          <RecordForm onSaved={() => {
+            axios.get(`${API}/logs?month=${calMonth}`)
+              .then(res => {
+                setWorkoutDates(res.data.dates || []);
+                setStrengthDates(res.data.strength_dates || []);
+                setCardioDates(res.data.cardio_dates || []);
+              });
+          }} />
+        )}
 
-          {tab === "record" && (
-            <RecordForm onSaved={() => {
-              axios.get(`${API}/logs?month=${calMonth}`)
-                .then(res => {
-                  setWorkoutDates(res.data.dates || []);
-                  setStrengthDates(res.data.strength_dates || []);
-                  setCardioDates(res.data.cardio_dates || []);
-                });
-            }} />
-          )}
-
-          {tab === "calendar" && (
-            <div>
+        {tab === "calendar" && (
+          <div>
+            <div style={S.card}>
+              <Calendar
+                workoutDates={workoutDates}
+                strengthDates={strengthDates}
+                cardioDates={cardioDates}
+                selectedDate={selectedDate}
+                onSelectDate={handleSelectDate}
+                onMonthChange={setCalMonth}
+              />
+            </div>
+            {selectedDate && (
               <div style={S.card}>
-                <Calendar
-                  workoutDates={workoutDates}
-                  strengthDates={strengthDates}
-                  cardioDates={cardioDates}
-                  selectedDate={selectedDate}
-                  onSelectDate={handleSelectDate}
-                  onMonthChange={setCalMonth}
-                />
-              </div>
-              {selectedDate && (
-                <div style={S.card}>
-                  <p style={S.sectionTitle}>📋 {selectedDate} 운동 기록</p>
+                <p style={S.sectionTitle}>📋 {selectedDate} 운동 기록</p>
 
-                  {/* 근력 */}
-                  {Object.keys(groupedLogs).length > 0 ? (
-                    Object.entries(groupedLogs).map(([name, sets]) => (
-                      <div key={name} style={{ marginBottom: 20 }}>
-                        <div style={{ fontWeight: "700", marginBottom: 8, color: "var(--accent)", fontSize: 15 }}>{name}</div>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14, tableLayout: "fixed" }}>
-                          <thead>
-                            <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                              <th style={S.th}>세트</th><th style={S.th}>무게</th><th style={S.th}>횟수</th><th style={{ ...S.th, width: 36 }}></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {sets.map((s, i) => {
+                {/* 근력 */}
+                {Object.keys(groupedLogs).length > 0 ? (
+                  Object.entries(groupedLogs).map(([name, sets]) => (
+                    <div key={name} style={{ marginBottom: 20 }}>
+                      <div style={{ fontWeight: "700", marginBottom: 8, color: "var(--accent)", fontSize: 15 }}>{name}</div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14, tableLayout: "fixed" }}>
+                        <thead>
+                          <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                            <th style={S.th}>세트</th><th style={S.th}>무게</th><th style={S.th}>횟수</th><th style={{ ...S.th, width: 36 }}></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sets.map((s, i) => {
+                            const setNumber =
+                              sets
+                                .slice(0, i + 1)
+                                .filter(x => x.workoutName === s.workoutName)
+                                .length;
 
-                              const setNumber =
-                                sets
-                                  .slice(0, i + 1)
-                                  .filter(x => x.workoutName === s.workoutName)
-                                  .length;
-
-                              return (
-                                <tr
-                                  key={i}
-                                  style={{
-                                    borderBottom: "1px solid var(--border)"
-                                  }}
-                                >
-                                  <td style={S.td}>
-                                    {s.workoutName}
-                                    <div
-                                      style={{
-                                        fontSize: 12,
-                                        color: "var(--sub)",
-                                        marginTop: 2
-                                      }}
-                                    >
-                                      {s.setType === "drop"
-                                        ? "🔻 DROP"
-                                        : `${setNumber}set`}
-                                    </div>
-                                  </td>
-
-                                  <td style={S.td}>
-                                    {s.weight_kg} kg
-                                  </td>
-
-                                  <td style={S.td}>
-                                    {s.reps}회
-                                  </td>
-
-                                  <td style={S.td}>
-                                    <button onClick={async () => {
-                                    if (!window.confirm("이 세트를 삭제할까요?")) return;
-                                    await axios.delete(`${API}/logs/${s.id}`);
-                                    handleSelectDate(selectedDate);
-                                  }} style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: 16 }}>✕</button>
-
+                            return (
+                              <tr
+                                key={i}
+                                style={{
+                                  borderBottom: "1px solid var(--border)"
+                                }}
+                              >
+                                <td style={S.td}>
+                                  {s.workoutName}
+                                  <div
+                                    style={{
+                                      fontSize: 12,
+                                      color: "var(--sub)",
+                                      marginTop: 2
+                                    }}
+                                  >
+                                    {s.setType === "drop"
+                                      ? "🔻 DROP"
+                                      : `${setNumber}set`}
+                                  </div>
                                 </td>
-                              </tr>
-                            )})}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))
-                  ) : (
-                    <div style={{ color: "var(--sub)", marginBottom: 16 }}>근력 기록 없음</div>
-                  )}
 
-                  {/* 유산소 */}
-                  <CardioLogsForDate date={selectedDate} />
-                </div>
-              )}
-            </div>
-          )}
+                                <td style={S.td}>
+                                  {s.weight_kg} kg
+                                </td>
 
-          {tab === "analyze" && (
-            <div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", paddingBottom: 4 }}>
-                {[
-                  { id: "volume", label: "📊 볼륨" },
-                  { id: "1rm",    label: "🏆 1RM" },
-                  { id: "trends", label: "📈 추세" },
-                  { id: "ml",     label: "🤖 ML" },
-                ].map(s => (
-                  <button key={s.id} onClick={() => setSubAnalyze(s.id)}
-                    style={{
-                      ...(subAnalyze === s.id ? S.btn("var(--accent)") : S.btnGhost),
-                      whiteSpace: "nowrap", flexShrink: 0,
-                    }}>
-                    {s.label}
-                  </button>
-                ))}
+                                <td style={S.td}>
+                                  {s.reps}회
+                                </td>
+
+                                <td style={S.td}>
+                                  <button onClick={async () => {
+                                  if (!window.confirm("이 세트를 삭제할까요?")) return;
+                                  await axios.delete(`${API}/logs/${s.id}`);
+                                  handleSelectDate(selectedDate);
+                                }} style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", fontSize: 16 }}>✕</button>
+
+                              </td>
+                            </tr>
+                          )})}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ color: "var(--sub)", marginBottom: 16 }}>근력 기록 없음</div>
+                )}
+
+                {/* 유산소 */}
+                <CardioLogsForDate date={selectedDate} />
               </div>
-              {subAnalyze === "volume" && <VolumeTab />}
-              {subAnalyze === "1rm"    && <OneRMTab />}
-              {subAnalyze === "trends" && <TrendsTab />}
-              {subAnalyze === "ml"     && <MLTab />}
+            )}
+          </div>
+        )}
+
+        {tab === "analyze" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", paddingBottom: 4 }}>
+              {[
+                { id: "volume", label: "📊 볼륨" },
+                { id: "1rm",    label: "🏆 1RM" },
+                { id: "trends", label: "📈 추세" },
+                { id: "ml",     label: "🤖 ML" },
+              ].map(s => (
+                <button key={s.id} onClick={() => setSubAnalyze(s.id)}
+                  style={{
+                    ...(subAnalyze === s.id ? S.btn("var(--accent)") : S.btnGhost),
+                    whiteSpace: "nowrap", flexShrink: 0,
+                  }}>
+                  {s.label}
+                </button>
+              ))}
             </div>
-          )}
+            {subAnalyze === "volume" && <VolumeTab />}
+            {subAnalyze === "1rm"    && <OneRMTab />}
+            {subAnalyze === "trends" && <TrendsTab />}
+            {subAnalyze === "ml"     && <MLTab />}
+          </div>
+        )}
 
-          {tab === "health" && (
-            <div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", paddingBottom: 4 }}>
-                {[
-                  { id: "body",    label: "⚖️ 바디" },
-                  { id: "cardio",  label: "🏃 유산소" },
-                  { id: "meal",    label: "🍽️ 식단" },
-                  { id: "routine", label: "📋 루틴" },
-                  { id: "ai",      label: "🤖 AI" },
-                ].map(s => (
-                  <button key={s.id} onClick={() => setSubHealth(s.id)}
-                    style={{
-                      ...(subHealth === s.id ? S.btn("var(--accent)") : S.btnGhost),
-                      whiteSpace: "nowrap", flexShrink: 0,
-                    }}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-              {subHealth === "body"    && <BodyTab />}
-              {subHealth === "cardio"  && <CardioAnalysisTab />}
-              {subHealth === "meal"    && <MealTab />}
-              {subHealth === "routine" && <RoutineTab />}
-              {subHealth === "ai"      && <AITab />}
+        {tab === "health" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", paddingBottom: 4 }}>
+              {[
+                { id: "body",    label: "⚖️ 바디" },
+                { id: "cardio",  label: "🏃 유산소" },
+                { id: "meal",    label: "🍽️ 식단" },
+                { id: "routine", label: "📋 루틴" },
+                { id: "ai",      label: "🤖 AI" },
+              ].map(s => (
+                <button key={s.id} onClick={() => setSubHealth(s.id)}
+                  style={{
+                    ...(subHealth === s.id ? S.btn("var(--accent)") : S.btnGhost),
+                    whiteSpace: "nowrap", flexShrink: 0,
+                  }}>
+                  {s.label}
+                </button>
+              ))}
             </div>
-          )}
+            {subHealth === "body"    && <BodyTab />}
+            {subHealth === "cardio"  && <CardioAnalysisTab />}
+            {subHealth === "meal"    && <MealTab />}
+            {subHealth === "routine" && <RoutineTab />}
+            {subHealth === "ai"      && <AITab />}
+          </div>
+        )}
 
-          {tab === "settings" && (
-            <SettingsTab
-              theme={theme}
-              onToggleTheme={toggleTheme}
-              onLogout={handleLogout}
-              userName={user.name}
-            />
-          )}
-        </div>
-
-        {/* 하단 탭바 */}
-        <div style={{
-          position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
-          width: "100%", maxWidth: 680,
-          background: "var(--tabbar)",
-          borderTop: "1px solid var(--border)",
-          display: "flex",
-          paddingBottom: "env(safe-area-inset-bottom)",
-          zIndex: 100,
-        }}>
-          {mainTabs.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{
-                flex: 1,
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                gap: 3, padding: "10px 0 8px",
-                background: "none", border: "none", cursor: "pointer",
-                color: tab === t.id ? "var(--accent)" : "var(--sub)",
-                transition: "color .15s",
-              }}>
-              <span style={{ fontSize: 22 }}>{t.icon}</span>
-              <span style={{ fontSize: 11, fontWeight: tab === t.id ? "700" : "500", letterSpacing: 0.3 }}>
-                {t.label}
-              </span>
-              <div style={{
-                width: tab === t.id ? 20 : 0, height: 3,
-                borderRadius: 2, background: "var(--accent)",
-                transition: "width .2s",
-              }} />
-            </button>
-          ))}
-        </div>
-      </div>
+        {tab === "settings" && (
+          <SettingsTab
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            onLogout={handleLogout}
+            userName={user.name}
+            showLastWorkout={showLastWorkout}
+            onToggleShowLastWorkout={setShowLastWorkout}
+          />
+        )}
+      </AppShell>
     </GoogleOAuthProvider>
   );
 }

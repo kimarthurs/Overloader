@@ -1,0 +1,199 @@
+/* Overloader 디자인 토큰 및 공통 레이아웃 */
+
+:root[data-theme="dark"] {
+  --bg: #0f0f12;
+  --card: #18181f;
+  --card-subtle: #121217;
+  --text: #f3f4f6;
+  --sub: #9ca3af;
+  --border: #282834;
+  --border-focus: #3e3e4f;
+  --accent: #f97316;
+  --accent-hover: #ea580c;
+  --accent-bg: rgba(249, 115, 22, 0.12);
+  --success: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.12);
+  --danger: #ef4444;
+  --tabbar: #14141a;
+  --sidebar: #121217;
+  --input-bg: #121217;
+  --radius-card: 16px;
+  --radius-inner: 12px;
+  --radius-pill: 9999px;
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f5f7;
+  --card: #ffffff;
+  --card-subtle: #f9fafb;
+  --text: #111827;
+  --sub: #6b7280;
+  --border: #e5e7eb;
+  --border-focus: #d1d5db;
+  --accent: #f97316;
+  --accent-hover: #ea580c;
+  --accent-bg: rgba(249, 115, 22, 0.08);
+  --success: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.08);
+  --danger: #ef4444;
+  --tabbar: #ffffff;
+  --sidebar: #ffffff;
+  --input-bg: #f9fafb;
+  --radius-card: 16px;
+  --radius-inner: 12px;
+  --radius-pill: 9999px;
+}
+
+/* ── 레이아웃 컨테이너 ── */
+.app-container {
+  min-height: 100vh;
+  background-color: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 900px) {
+  .app-container {
+    flex-direction: row;
+  }
+}
+
+/* ── PC 사이드바 ── */
+.pc-sidebar {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .pc-sidebar {
+    display: flex;
+    flex-direction: column;
+    width: 240px;
+    min-width: 240px;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+    background-color: var(--sidebar);
+    border-right: 1px solid var(--border);
+    padding: 24px 16px 20px;
+    box-sizing: border-box;
+    z-index: 40;
+  }
+}
+
+/* ── 모바일 헤더 ── */
+.mobile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 16px;
+  background-color: var(--sidebar);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  box-sizing: border-box;
+}
+
+@media (min-width: 900px) {
+  .mobile-header {
+    display: none;
+  }
+}
+
+/* ── 메인 콘텐츠 ── */
+.main-content {
+  flex: 1;
+  min-width: 0;
+  padding: 16px;
+  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+@media (min-width: 900px) {
+  .main-content {
+    padding: 28px 36px;
+    padding-bottom: 40px;
+  }
+}
+
+/* ── 모바일 하단 탭바 ── */
+.mobile-bottom-nav {
+  display: flex;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background-color: var(--tabbar);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 50;
+  box-sizing: border-box;
+}
+
+@media (min-width: 900px) {
+  .mobile-bottom-nav {
+    display: none;
+  }
+}
+
+/* ── 카드 스타일 ── */
+.ui-card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+@media (min-width: 900px) {
+  .home-grid {
+    grid-template-columns: 1.35fr 1fr !important;
+  }
+}
+
+/* ── 버튼 스타일 ── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: var(--radius-inner);
+  background-color: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 14px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s, background-color 0.15s;
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-hover);
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--radius-inner);
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.btn-ghost:hover {
+  background-color: var(--card-subtle);
+}
