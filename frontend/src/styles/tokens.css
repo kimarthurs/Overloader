@@ -327,4 +327,52 @@
   cursor: default;
 }
 
+/* ── 분석 화면 (Analytics Screen) 스타일 ── */
+.analyze-nav {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.analyze-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.analyze-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--sub);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.analyze-nav-btn:hover {
+  color: var(--text);
+  border-color: var(--border-focus);
+}
+
+.analyze-nav-btn.active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.analyze-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+
 
