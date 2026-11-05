@@ -2,7 +2,7 @@
 
 작성 일시: 2026-11-04 (로컬 시간)  
 기준 브랜치: `feature/redesign-shell-home`  
-현재 HEAD 커밋: `5317734` (`feat: implement calendar tab redesign (month grid and day detail)`)  
+현재 HEAD 커밋: `e0e0106` (`feat: implement analytics tab redesign (volume, 1rm, trends, ml)`)
 리디자인 시작 전 원본 기준 커밋: `e43fa5669793a4e18e59cf9bdcddd21c0d5a020b`  
 원격 보존 브랜치: `backup/pre-redesign` 및 `feature/redesign-shell-home` (origin: `https://github.com/kimarthurs/Overloader.git`)
 
@@ -39,10 +39,10 @@
    * `2.png` / `2.pdf`: 기록 > 근력 (`/record`) — **승인 및 구현 완료**
    * `3.png` / `3.pdf`: 기록 > 유산소 (`/record`) — **승인 및 구현 완료**
    * `4.png` / `4.pdf`: 달력 (`/calendar`) — **승인 및 구현 완료**
-   * `5.png` / `5.pdf`: 분석 > 볼륨 (`/analyze?tab=volume`) — **미착수 (차기 작업 후보)**
-   * `6.png` / `6.pdf`: 분석 > 1RM (`/analyze?tab=1rm`) — **미착수**
-   * `7.png` / `7.pdf`: 분석 > 추세 (`/analyze?tab=trends`) — **미착수**
-   * `8.png` / `8.pdf`: 분석 > 머신러닝 (`/analyze?tab=ml`) — **미착수**
+   * `5.png` / `5.pdf`: 분석 > 볼륨 (`/analyze?tab=volume`) — **승인 및 구현 완료**
+   * `6.png` / `6.pdf`: 분석 > 1RM (`/analyze?tab=1rm`) — **승인 및 구현 완료**
+   * `7.png` / `7.pdf`: 분석 > 추세 (`/analyze?tab=trends`) — **승인 및 구현 완료**
+   * `8.png` / `8.pdf`: 분석 > 머신러닝 (`/analyze?tab=ml`) — **승인 및 구현 완료**
    * `9.png` / `9.pdf`: 건강 > 바디 (`/health?tab=body`) — **미착수**
    * `10.png` / `10.pdf`: 건강 > 유산소 통계 (`/health?tab=cardio`) — **미착수**
    * `11.png` / `11.pdf`: 건강 > 식단 (`/health?tab=meal`) — **미착수**
@@ -57,7 +57,8 @@
 1. **공통 앱 셸 + 홈 화면**: 브라우저 확인 후 **디자인 및 동작 승인 완료** (체크포인트: `e599a57`)
 2. **기록(Record) 탭**: 브라우저 확인 후 **디자인 및 인터랙션 승인 완료** (체크포인트: `988b433`)
 3. **달력(Calendar) 탭**: 브라우저 확인 후 **디자인 및 화면 배치 승인 완료** (체크포인트: `5317734`)
-4. **후속 탭 상태 (분석/건강/설정)**:
+4. **분석(Analyze) 탭**: 브라우저 확인 후 **디자인 및 화면 구성 승인 완료** (체크포인트: `e0e0106`)
+5. **후속 탭 상태 (건강/설정)**:
    * **아직 미승인 및 미착수 상태**입니다.
    * 기존 구형 화면 코드가 `App.js` 내에 그대로 보존되어 정상 작동 중입니다.
    * 사용자의 명시적인 사전 승인 없이 임의로 후속 탭 코드를 수정하거나 삭제하지 마십시오.
