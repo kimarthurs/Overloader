@@ -8,57 +8,12 @@ import RecordScreen from "./components/record/RecordScreen";
 import CalendarScreen from "./components/calendar/CalendarScreen";
 import AnalyticsScreen from "./components/analyze/AnalyticsScreen";
 import HealthScreen from "./components/health/HealthScreen";
+import SettingsScreen from "./components/settings/SettingsScreen";
 
 const API = process.env.REACT_APP_API_URL;
 const GOOGLE_CLIENT_ID = "907903471313-hrjku47jnpcgqktsp3vhfsq5846iutkb.apps.googleusercontent.com";
 
-// ── 공통 스타일 (CSS 변수 사용) ──
-const S = {
-  card: {
-    background: "var(--card)",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    border: "1px solid var(--border)",
-  },
-  input: {
-    padding: "11px 14px",
-    borderRadius: 10,
-    border: "1px solid var(--border)",
-    fontSize: 15,
-    width: "100%",
-    boxSizing: "border-box",
-    background: "var(--input-bg)",
-    color: "var(--text)",
-    outline: "none",
-  },
-  btn: (color) => ({
-    padding: "11px 20px",
-    borderRadius: 10,
-    border: "none",
-    cursor: "pointer",
-    background: color || "var(--accent)",
-    color: "white",
-    fontWeight: "700",
-    fontSize: 15,
-    transition: "opacity .15s",
-  }),
-  btnGhost: {
-    padding: "11px 20px",
-    borderRadius: 10,
-    border: "1px solid var(--border)",
-    cursor: "pointer",
-    background: "transparent",
-    color: "var(--text)",
-    fontWeight: "600",
-    fontSize: 15,
-  },
-  th: { padding: "10px 12px", textAlign: "left", fontWeight: "700", color: "var(--sub)", fontSize: 13 },
-  td: { padding: "10px 12px", fontSize: 14, color: "var(--text)" },
-  sectionTitle: { fontSize: 17, fontWeight: "700", color: "var(--text)", marginBottom: 16, marginTop: 0 },
-};
-
-// ── 다크모드 훅 ──
+// ── 다크모드 훅 ──// ── 다크모드 훅 ──
 function useTheme() {
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "light");
   const toggle = () => {
@@ -83,115 +38,7 @@ function useTheme() {
 // ── 분석: 유산소 ──
 // ── 건강 탭: HealthScreen 컴포넌트로 분리됨 (src/components/health/HealthScreen.jsx) ──
 
-// ── 설정 탭 ──
-function SettingsTab({ theme, onToggleTheme, onLogout, userName, showLastWorkout, onToggleShowLastWorkout }) {
-  const [settings, setSettings] = useState(null);
-
-  useEffect(() => {
-    axios.get(`${API}/settings`).then(res => {
-      setSettings(res.data);
-    });
-  }, []);
-
-  if (!settings) return <div style={{ color: "var(--sub)" }}>로딩 중...</div>;
-
-  const isEnabled = showLastWorkout !== undefined ? showLastWorkout : (settings.show_last_workout ?? true);
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-
-      {/* 계정 */}
-      <div style={S.card}>
-        <p style={{ fontWeight: "700", marginBottom: 12, marginTop: 0, color: "var(--text)" }}>👤 계정</p>
-        <p style={{ color: "var(--sub)", fontSize: 14, marginBottom: 14, marginTop: 0 }}>{userName}</p>
-        <button onClick={onLogout} style={{ ...S.btnGhost, width: "100%" }}>로그아웃</button>
-      </div>
-
-      {/* 다크모드 토글 */}
-      <div style={S.card}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <p style={{ fontWeight: "700", margin: 0, color: "var(--text)" }}>
-              {theme === "dark" ? "🌙 다크 모드" : "☀️ 라이트 모드"}
-            </p>
-            <p style={{ fontSize: 13, color: "var(--sub)", margin: "4px 0 0" }}>브라우저에 저장됩니다</p>
-          </div>
-          <div onClick={onToggleTheme}
-            style={{
-              width: 52, height: 28, borderRadius: 14, cursor: "pointer",
-              background: theme === "dark" ? "var(--accent)" : "var(--border)",
-              position: "relative", transition: "background .2s", flexShrink: 0,
-            }}>
-            <div style={{
-              position: "absolute", top: 3,
-              left: theme === "dark" ? 27 : 3,
-              width: 22, height: 22, borderRadius: "50%",
-              background: "white", transition: "left .2s",
-              boxShadow: "0 1px 4px rgba(0,0,0,.3)"
-            }} />
-          </div>
-        </div>
-      </div>
-
-      {/* 홈 최근 운동 표시 */}
-      <div style={S.card}>
-        <p style={{
-          fontWeight: "700",
-          marginBottom: 4,
-          marginTop: 0,
-          color: "var(--text)"
-        }}>
-          💪 홈 최근 운동 표시
-        </p>
-
-        <p style={{
-          color: "var(--sub)",
-          fontSize: 14,
-          marginBottom: 14,
-          marginTop: 0
-        }}>
-          메인 화면에 최근 운동 기록 카드를 표시합니다
-        </p>
-
-        <div style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center"
-        }}>
-
-          <span style={{
-            color: "var(--text)",
-            fontWeight: "600"
-          }}>
-            최근 운동 표시
-          </span>
-
-          <input
-            type="checkbox"
-            checked={isEnabled}
-
-            onChange={async (e) => {
-              const enabled = e.target.checked;
-
-              setSettings({
-                ...settings,
-                show_last_workout: enabled
-              });
-
-              if (onToggleShowLastWorkout) {
-                onToggleShowLastWorkout(enabled);
-              }
-
-              await axios.post(
-                `${API}/settings/last-workout?enabled=${enabled}`
-              );
-            }}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
+// ── 설정 탭: SettingsScreen 컴포넌트로 분리됨 (src/components/settings/SettingsScreen.jsx) ──
 
 // ── 로그인 화면 ──
 function LoginScreen({ onLogin }) {
@@ -303,7 +150,7 @@ export default function App() {
         )}
 
         {tab === "settings" && (
-          <SettingsTab
+          <SettingsScreen
             theme={theme}
             onToggleTheme={toggleTheme}
             onLogout={handleLogout}
