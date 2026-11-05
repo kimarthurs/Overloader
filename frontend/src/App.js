@@ -9,11 +9,12 @@ import CalendarScreen from "./components/calendar/CalendarScreen";
 import AnalyticsScreen from "./components/analyze/AnalyticsScreen";
 import HealthScreen from "./components/health/HealthScreen";
 import SettingsScreen from "./components/settings/SettingsScreen";
+import { applyAccentColor, getSavedAccentColor } from "./utils/accentColor";
 
 const API = process.env.REACT_APP_API_URL;
 const GOOGLE_CLIENT_ID = "907903471313-hrjku47jnpcgqktsp3vhfsq5846iutkb.apps.googleusercontent.com";
 
-// ── 다크모드 훅 ──// ── 다크모드 훅 ──
+// ── 다크모드 훅 ──
 function useTheme() {
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "light");
   const toggle = () => {
@@ -76,6 +77,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    applyAccentColor(getSavedAccentColor());
     registerLogoutCallback(clearAppState);
   }, [clearAppState]);
 

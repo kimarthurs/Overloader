@@ -15,6 +15,13 @@ import {
   CopyIcon,
   CheckIcon
 } from "../common/Icons";
+import {
+  DEFAULT_ACCENT,
+  ACCENT_PRESETS,
+  isValidHex,
+  applyAccentColor,
+  getSavedAccentColor
+} from "../../utils/accentColor";
 
 const API = process.env.REACT_APP_API_URL;
 
@@ -47,7 +54,7 @@ const S = {
     width: "100%",
     transition: "border-color 0.15s"
   },
-  btn: (bg = "var(--accent)", color = "#ffffff") => ({
+  btn: (bg = "var(--accent)", color = "var(--accent-contrast, #ffffff)") => ({
     background: bg,
     color: color,
     border: "none",
@@ -104,6 +111,10 @@ export default function SettingsScreen({
   const [showDiscordUrl, setShowDiscordUrl] = useState(false);
   const [savingDiscord, setSavingDiscord] = useState(false);
   const [discordStatusMsg, setDiscordStatusMsg] = useState("");
+
+  // 강조색 상태
+  const [accentColor, setAccentColor] = useState(getSavedAccentColor);
+  const [hexInput, setHexInput] = useState(() => getSavedAccentColor().toUpperCase());
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -177,6 +188,29 @@ export default function SettingsScreen({
     } finally {
       setSavingDiscord(false);
     }
+  };
+
+  // 강조색 변경 핸들러
+  const handleSelectAccent = (hex) => {
+    const applied = applyAccentColor(hex);
+    setAccentColor(applied);
+    setHexInput(applied.toUpperCase());
+  };
+
+  const handleHexInputChange = (val) => {
+    let clean = val.trim();
+    if (clean && !clean.startsWith("#")) {
+      clean = "#" + clean;
+    }
+    setHexInput(clean);
+    if (isValidHex(clean)) {
+      const applied = applyAccentColor(clean);
+      setAccentColor(applied);
+    }
+  };
+
+  const handleResetAccent = () => {
+    handleSelectAccent(DEFAULT_ACCENT);
   };
 
   // 홈 최근 운동 표시 토글
@@ -309,7 +343,147 @@ export default function SettingsScreen({
             </div>
           </div>
 
-          {/* 3. 홈 최근 운동 표시 */}
+          {/* 3. 강조 색상 (Accent Color) */}
+          <div style={S.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: "var(--radius-inner)",
+                  background: "var(--accent-bg)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--accent)"
+                }}>
+                  <span style={{ fontSize: 20 }}>🎨</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: "700", color: "var(--text)" }}>
+                    강조 색상 (테마 컬러)
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--sub)", marginTop: 2 }}>
+                    버튼, 활성 탭, 캘린더 선택 등에 적용됩니다. (이 브라우저에 저장됩니다)
+                  </div>
+                </div>
+              </div>
+
+              {accentColor.toLowerCase() !== DEFAULT_ACCENT.toLowerCase() && (
+                <button
+                  type="button"
+                  onClick={handleResetAccent}
+                  style={{ ...S.btnGhost, padding: "5px 10px", fontSize: 12 }}
+                >
+                  기본 오렌지로 초기화
+                </button>
+              )}
+            </div>
+
+            {/* 프리셋 색상 칩 목록 */}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+              {ACCENT_PRESETS.map((p) => {
+                const isSelected = accentColor.toLowerCase() === p.hex.toLowerCase();
+                return (
+                  <button
+                    key={p.hex}
+                    type="button"
+                    onClick={() => handleSelectAccent(p.hex)}
+                    className={`accent-preset-chip ${isSelected ? "active" : ""}`}
+                    style={{ backgroundColor: p.hex }}
+                    title={p.label}
+                    aria-label={p.label}
+                  >
+                    {isSelected && (
+                      <CheckIcon size={14} color={parseInt(p.hex.slice(1), 16) > 0xaaaaaa ? "#111827" : "#ffffff"} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 커스텀 색상 피커 및 직접 HEX 입력 */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              background: "var(--card-subtle)",
+              padding: 12,
+              borderRadius: "var(--radius-inner)",
+              border: "1px solid var(--border)",
+              flexWrap: "wrap"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <label
+                  style={{
+                    position: "relative",
+                    width: 34,
+                    height: 34,
+                    borderRadius: "50%",
+                    backgroundColor: accentColor,
+                    border: "2px solid var(--border)",
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    display: "inline-block",
+                    flexShrink: 0
+                  }}
+                  title="컬러 피커 열기"
+                >
+                  <input
+                    type="color"
+                    value={accentColor}
+                    onChange={(e) => handleSelectAccent(e.target.value)}
+                    style={{
+                      position: "absolute",
+                      top: "-50%",
+                      left: "-50%",
+                      width: "200%",
+                      height: "200%",
+                      cursor: "pointer",
+                      opacity: 0,
+                      border: "none"
+                    }}
+                  />
+                </label>
+                <span style={{ fontSize: 12, color: "var(--sub)" }}>컬러 피커</span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 140 }}>
+                <span style={{ fontSize: 13, fontWeight: "600", color: "var(--sub)" }}>HEX</span>
+                <input
+                  type="text"
+                  value={hexInput}
+                  onChange={(e) => handleHexInputChange(e.target.value)}
+                  placeholder="#F97316"
+                  maxLength={7}
+                  style={{
+                    ...S.input,
+                    padding: "6px 10px",
+                    fontSize: 13,
+                    fontFamily: "monospace",
+                    textTransform: "uppercase",
+                    width: 100
+                  }}
+                />
+              </div>
+
+              {/* 실시간 미리보기 샘플 */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{
+                  padding: "6px 12px",
+                  borderRadius: "var(--radius-pill)",
+                  background: "var(--accent)",
+                  color: "var(--accent-contrast, #ffffff)",
+                  fontSize: 12,
+                  fontWeight: "700"
+                }}>
+                  버튼 미리보기
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. 홈 최근 운동 표시 */}
           <div style={S.card}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

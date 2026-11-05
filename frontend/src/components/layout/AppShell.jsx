@@ -7,7 +7,6 @@ import {
   HealthIcon,
   SettingsIcon,
   LogoutIcon,
-  BoltIcon,
   UserIcon
 } from "../common/Icons";
 
@@ -30,26 +29,43 @@ export default function AppShell({
     <div className="app-container">
       {/* ── 데스크톱 고정 좌측 사이드바 ── */}
       <aside className="pc-sidebar">
-        {/* 로고 영역 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 28 }}>
-          <div
+        {/* 로고 + 제목 홈 이동 버튼 */}
+        <button
+          type="button"
+          onClick={() => onTabChange("home")}
+          className="brand-home-btn"
+          aria-label="Overloader 홈으로 이동"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 28,
+            background: "none",
+            border: "none",
+            padding: "4px 8px",
+            margin: "-4px -8px 24px",
+            borderRadius: "var(--radius-inner)",
+            cursor: "pointer",
+            textAlign: "left"
+          }}
+        >
+          <img
+            src={`${process.env.PUBLIC_URL}/favicon-96x96.png`}
+            alt="Overloader 로고"
+            width={32}
+            height={32}
             style={{
               width: 32,
               height: 32,
-              borderRadius: 8,
-              backgroundColor: "var(--accent)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#ffffff"
+              objectFit: "contain",
+              display: "block",
+              flexShrink: 0
             }}
-          >
-            <BoltIcon size={18} />
-          </div>
+          />
           <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.5, color: "var(--text)" }}>
             Overloader
           </span>
-        </div>
+        </button>
 
         {/* 메인 메뉴 네비게이션 */}
         <nav style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
@@ -175,25 +191,42 @@ export default function AppShell({
 
       {/* ── 모바일 전용 상단 헤더 ── */}
       <header className="mobile-header">
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div
+        {/* 로고 + 제목 홈 이동 버튼 */}
+        <button
+          type="button"
+          onClick={() => onTabChange("home")}
+          className="brand-home-btn"
+          aria-label="Overloader 홈으로 이동"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            background: "none",
+            border: "none",
+            padding: "4px 6px",
+            margin: "0 -6px",
+            borderRadius: "var(--radius-inner)",
+            cursor: "pointer",
+            textAlign: "left"
+          }}
+        >
+          <img
+            src={`${process.env.PUBLIC_URL}/favicon-96x96.png`}
+            alt="Overloader 로고"
+            width={26}
+            height={26}
             style={{
               width: 26,
               height: 26,
-              borderRadius: 6,
-              backgroundColor: "var(--accent)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#ffffff"
+              objectFit: "contain",
+              display: "block",
+              flexShrink: 0
             }}
-          >
-            <BoltIcon size={15} />
-          </div>
+          />
           <span style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.5, color: "var(--text)" }}>
             Overloader
           </span>
-        </div>
+        </button>
 
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <button

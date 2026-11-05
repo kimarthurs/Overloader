@@ -58,7 +58,7 @@ const S = {
     width: "100%",
     transition: "border-color 0.15s"
   },
-  btn: (bg = "var(--accent)", color = "#ffffff") => ({
+  btn: (bg = "var(--accent)", color = "var(--accent-contrast, #ffffff)") => ({
     background: bg,
     color: color,
     border: "none",
