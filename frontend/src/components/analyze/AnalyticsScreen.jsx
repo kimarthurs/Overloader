@@ -146,7 +146,7 @@ function VolumePanel() {
       <div className="ui-card" style={{ padding: "20px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-            📊 부위별 볼륨 비교
+            부위별 볼륨 비교
           </span>
           <span style={{ fontSize: 12, color: "var(--sub)" }}>단위: kg</span>
         </div>
@@ -314,7 +314,7 @@ function OneRmPanel() {
       <div className="ui-card" style={{ padding: "18px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-            🏆 종목별 1RM 순위
+            종목별 1RM 순위
           </span>
           <span style={{ fontSize: 12, color: "var(--sub)" }}>총 {sortedList.length}개 종목</span>
         </div>
@@ -435,19 +435,189 @@ function TrendsPanel() {
       : allData.workouts.filter((w) => CATEGORIES[category]?.includes(w))
     : [];
 
-  // 전체 추세 멀티라인 차트용 날짜별 맵 결합 (기존 코드 보존)
+  // 안전한 로컬 타임존 날짜 파싱 헬퍼 (밀림 방지)
+  const parseLocalDateToTimestamp = (dateStr) => {
+    if (!dateStr) return 0;
+    const parts = String(dateStr).split("-").map(Number);
+    if (parts.length === 3) {
+      return new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+    }
+    return new Date(dateStr).getTime();
+  };
+
+  // 안정적인 Y축 범위 계산 (최소 15kg 폭 확보 및 적응형 패딩으로 과장 방지)
+  const calculateYDomain = (minVal, maxVal, minSpan = 15) => {
+    if (!isFinite(minVal) || !isFinite(maxVal)) return [0, 100];
+    const span = maxVal - minVal;
+    if (span < minSpan) {
+      const mid = (minVal + maxVal) / 2;
+      const half = minSpan / 2;
+      const low = Math.max(0, Math.floor((mid - half) / 5) * 5);
+      const high = Math.ceil((mid + half) / 5) * 5;
+      return [low, high];
+    }
+    const pad = Math.max(span * 0.12, 5);
+    const low = Math.max(0, Math.floor((minVal - pad) / 5) * 5);
+    const high = Math.ceil((maxVal + pad) / 5) * 5;
+    return [low, high];
+  };
+
+  // 전체 추세 멀티라인 차트용 날짜별 맵 결합 (실제 관측치 보존)
   const mergedMap = {};
   if (allData && Array.isArray(allData.data)) {
     allData.data.forEach((d) => {
       const date = d.date;
-      if (!mergedMap[date]) mergedMap[date] = { date };
+      if (!mergedMap[date]) {
+        mergedMap[date] = { date, timestamp: parseLocalDateToTimestamp(date) };
+      }
       mergedMap[date][d.workout_name] = d.est_1rm;
     });
   }
-  const mergedData = Object.values(mergedMap).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const mergedData = Object.values(mergedMap).sort((a, b) => a.timestamp - b.timestamp);
 
-  // 상세 기록 정렬
-  const sortedDetail = [...detailData].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const activeWorkouts = filteredWorkouts.slice(0, 8);
+
+  // 멀티라인 Y축 범위 계산
+  let trendMinY = Infinity;
+  let trendMaxY = -Infinity;
+  mergedData.forEach((row) => {
+    activeWorkouts.forEach((w) => {
+      const val = row[w];
+      if (typeof val === "number" && !isNaN(val)) {
+        if (val < trendMinY) trendMinY = val;
+        if (val > trendMaxY) trendMaxY = val;
+      }
+    });
+  });
+  const trendYDomain = calculateYDomain(trendMinY, trendMaxY, 15);
+
+  // 멀티라인 X축 시간 범위 계산 (1개 지점 예외 방어)
+  let trendXDomain = ["dataMin", "dataMax"];
+  if (mergedData.length === 1) {
+    const ts = mergedData[0].timestamp;
+    trendXDomain = [ts - 86400000, ts + 86400000];
+  } else if (mergedData.length > 1) {
+    const minTs = mergedData[0].timestamp;
+    const maxTs = mergedData[mergedData.length - 1].timestamp;
+    const pad = Math.max((maxTs - minTs) * 0.05, 86400000);
+    trendXDomain = [minTs - pad, maxTs + pad];
+  }
+
+  // 상세 기록 정렬 및 타임스탬프 계산
+  const sortedDetail = [...detailData]
+    .map((item) => ({
+      ...item,
+      timestamp: parseLocalDateToTimestamp(item.date)
+    }))
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  // 상세 차트 Y축 범위 계산
+  let detailMinY = Infinity;
+  let detailMaxY = -Infinity;
+  sortedDetail.forEach((row) => {
+    if (typeof row.est_1rm === "number" && !isNaN(row.est_1rm)) {
+      if (row.est_1rm < detailMinY) detailMinY = row.est_1rm;
+      if (row.est_1rm > detailMaxY) detailMaxY = row.est_1rm;
+    }
+    if (typeof row.weight_kg === "number" && !isNaN(row.weight_kg)) {
+      if (row.weight_kg < detailMinY) detailMinY = row.weight_kg;
+      if (row.weight_kg > detailMaxY) detailMaxY = row.weight_kg;
+    }
+  });
+  const detailYDomain = calculateYDomain(detailMinY, detailMaxY, 15);
+
+  // 상세 차트 X축 시간 범위 계산
+  let detailXDomain = ["dataMin", "dataMax"];
+  if (sortedDetail.length === 1) {
+    const ts = sortedDetail[0].timestamp;
+    detailXDomain = [ts - 86400000, ts + 86400000];
+  } else if (sortedDetail.length > 1) {
+    const minTs = sortedDetail[0].timestamp;
+    const maxTs = sortedDetail[sortedDetail.length - 1].timestamp;
+    const pad = Math.max((maxTs - minTs) * 0.05, 86400000);
+    detailXDomain = [minTs - pad, maxTs + pad];
+  }
+
+  // 멀티라인 스타일 (색상 + 대시패턴 조합으로 가독성 향상)
+  const LINE_STYLES = [
+    { strokeDasharray: undefined, dotRadius: 4 },
+    { strokeDasharray: "5 5", dotRadius: 3.5 },
+    { strokeDasharray: "2 2", dotRadius: 3 },
+    { strokeDasharray: "8 4", dotRadius: 4 },
+    { strokeDasharray: "6 3 2 3", dotRadius: 3.5 },
+    { strokeDasharray: "4 4", dotRadius: 3.5 },
+    { strokeDasharray: "10 2", dotRadius: 4 },
+    { strokeDasharray: "3 3", dotRadius: 3 }
+  ];
+
+  // 툴팁 렌더러 (테마 CSS 변수 호환 및 날짜 형식화)
+  const renderTrendsTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    const d = new Date(label);
+    const dateStr = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+    return (
+      <div
+        style={{
+          backgroundColor: "var(--card)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-inner)",
+          padding: "10px 12px",
+          boxShadow: "var(--shadow-card)",
+          fontSize: 12
+        }}
+      >
+        <div style={{ color: "var(--sub)", marginBottom: 6, fontWeight: 600 }}>{dateStr}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {payload.map((entry, idx) => (
+            <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, color: entry.color || "var(--text)" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: entry.color }} />
+                {entry.name}
+              </span>
+              <span style={{ fontWeight: 700, color: "var(--text)" }}>{entry.value} kg</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderDetailTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    const d = new Date(label);
+    const dateStr = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+    const rowData = payload[0]?.payload;
+    return (
+      <div
+        style={{
+          backgroundColor: "var(--card)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-inner)",
+          padding: "10px 12px",
+          boxShadow: "var(--shadow-card)",
+          fontSize: 12
+        }}
+      >
+        <div style={{ color: "var(--sub)", marginBottom: 6, fontWeight: 600 }}>{dateStr}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {payload.map((entry, idx) => (
+            <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, color: entry.color || "var(--text)" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: entry.color }} />
+                {entry.name}
+              </span>
+              <span style={{ fontWeight: 700, color: "var(--text)" }}>{entry.value} kg</span>
+            </div>
+          ))}
+          {rowData?.reps && (
+            <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 2, borderTop: "1px solid var(--border)", paddingTop: 4 }}>
+              수행 횟수: {rowData.reps}회
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -534,40 +704,47 @@ function TrendsPanel() {
             <div className="ui-card" style={{ padding: "20px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-                  📈 상위 종목 추정 1RM 추세
+                  상위 종목 추정 1RM 추세
                 </span>
                 <span style={{ fontSize: 12, color: "var(--sub)" }}>단위: kg</span>
               </div>
 
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={mergedData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+              <ResponsiveContainer width="100%" height={320}>
+                <LineChart data={mergedData} margin={{ top: 16, right: 20, left: 10, bottom: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                   <XAxis
-                    dataKey="date"
-                    tickFormatter={(d) => String(d).slice(5)}
+                    dataKey="timestamp"
+                    type="number"
+                    scale="time"
+                    domain={trendXDomain}
+                    tickFormatter={(ts) => {
+                      const d = new Date(ts);
+                      return `${d.getMonth() + 1}/${d.getDate()}`;
+                    }}
                     tick={{ fontSize: 11, fill: "var(--sub)" }}
                     tickLine={false}
+                    axisLine={{ stroke: "var(--border)" }}
                   />
-                  <YAxis unit="kg" tick={{ fontSize: 11, fill: "var(--sub)" }} tickLine={false} axisLine={false} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "var(--card)",
-                      borderColor: "var(--border)",
-                      borderRadius: "var(--radius-inner)",
-                      color: "var(--text)"
-                    }}
-                    formatter={(v, n) => [`${v} kg`, n]}
+                  <YAxis
+                    unit="kg"
+                    domain={trendYDomain}
+                    tick={{ fontSize: 11, fill: "var(--sub)" }}
+                    tickLine={false}
+                    axisLine={false}
                   />
+                  <Tooltip content={renderTrendsTooltip} />
                   <Legend wrapperStyle={{ paddingTop: 10, fontSize: 12 }} />
-                  {filteredWorkouts.slice(0, 8).map((w, idx) => (
+                  {activeWorkouts.map((w, idx) => (
                     <Line
                       key={w}
                       type="monotone"
                       dataKey={w}
                       name={w}
                       stroke={CHART_COLORS[idx % CHART_COLORS.length]}
+                      strokeDasharray={LINE_STYLES[idx % LINE_STYLES.length].strokeDasharray}
                       strokeWidth={2}
-                      dot={{ r: 3 }}
+                      dot={{ r: LINE_STYLES[idx % LINE_STYLES.length].dotRadius, stroke: "var(--card)", strokeWidth: 1.5 }}
+                      activeDot={{ r: 6 }}
                       connectNulls
                     />
                   ))}
@@ -587,7 +764,7 @@ function TrendsPanel() {
               <div className="ui-card" style={{ padding: "20px 16px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                   <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-                    📈 {selectedWorkout} 상세 추세
+                    {selectedWorkout} 상세 추세
                   </span>
                   <button
                     type="button"
@@ -599,25 +776,30 @@ function TrendsPanel() {
                   </button>
                 </div>
 
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={sortedDetail} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                <ResponsiveContainer width="100%" height={280}>
+                  <LineChart data={sortedDetail} margin={{ top: 16, right: 20, left: 10, bottom: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                     <XAxis
-                      dataKey="date"
-                      tickFormatter={(d) => String(d).slice(5)}
+                      dataKey="timestamp"
+                      type="number"
+                      scale="time"
+                      domain={detailXDomain}
+                      tickFormatter={(ts) => {
+                        const d = new Date(ts);
+                        return `${d.getMonth() + 1}/${d.getDate()}`;
+                      }}
                       tick={{ fontSize: 11, fill: "var(--sub)" }}
                       tickLine={false}
+                      axisLine={{ stroke: "var(--border)" }}
                     />
-                    <YAxis unit="kg" domain={["auto", "auto"]} tick={{ fontSize: 11, fill: "var(--sub)" }} tickLine={false} axisLine={false} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "var(--card)",
-                        borderColor: "var(--border)",
-                        borderRadius: "var(--radius-inner)",
-                        color: "var(--text)"
-                      }}
-                      formatter={(v, n) => [`${v} kg`, n]}
+                    <YAxis
+                      unit="kg"
+                      domain={detailYDomain}
+                      tick={{ fontSize: 11, fill: "var(--sub)" }}
+                      tickLine={false}
+                      axisLine={false}
                     />
+                    <Tooltip content={renderDetailTooltip} />
                     <Legend wrapperStyle={{ paddingTop: 10, fontSize: 12 }} />
                     <Line
                       type="monotone"
@@ -625,7 +807,8 @@ function TrendsPanel() {
                       name="추정 1RM"
                       stroke="var(--accent)"
                       strokeWidth={2.5}
-                      dot={{ r: 4 }}
+                      dot={{ r: 4.5, stroke: "var(--card)", strokeWidth: 1.5 }}
+                      activeDot={{ r: 6 }}
                       connectNulls
                     />
                     <Line
@@ -634,9 +817,10 @@ function TrendsPanel() {
                       name="실제 무게"
                       stroke="#3b82f6"
                       strokeWidth={2}
-                      dot={{ r: 3 }}
-                      connectNulls
                       strokeDasharray="4 4"
+                      dot={{ r: 3.5, stroke: "var(--card)", strokeWidth: 1.5 }}
+                      activeDot={{ r: 5 }}
+                      connectNulls
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -645,7 +829,7 @@ function TrendsPanel() {
               {/* 상세 기록 내역 테이블 */}
               <div className="ui-card" style={{ padding: "18px 16px" }}>
                 <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginBottom: 12, display: "block" }}>
-                  📋 {selectedWorkout} 기록 내역
+                  {selectedWorkout} 기록 내역
                 </span>
 
                 <div style={{ overflowX: "auto" }}>
@@ -692,8 +876,6 @@ function TrendsPanel() {
 }
 
 // ─────────────────────────────────────────────
-// 4. 머신러닝 서브탭 (MlPanel)
-// ─────────────────────────────────────────────
 function MlPanel() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -714,7 +896,7 @@ function MlPanel() {
   if (loading) {
     return (
       <div style={{ textAlign: "center", padding: "60px 0", color: "var(--sub)", fontSize: 13 }}>
-        🤖 머신러닝 모델 분석 중...
+        머신러닝 모델 분석 중...
       </div>
     );
   }
@@ -728,7 +910,7 @@ function MlPanel() {
       <div className="ui-card" style={{ padding: "24px 20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--accent)", fontWeight: 700, fontSize: 16 }}>
           <BoltIcon size={18} />
-          <span>🤖 머신러닝 추천</span>
+          <span>머신러닝 추천</span>
         </div>
 
         <p style={{ color: "var(--text)", fontSize: 14, margin: "14px 0 6px", fontWeight: 600 }}>
@@ -749,7 +931,7 @@ function MlPanel() {
             lineHeight: 1.6
           }}
         >
-          💡 <strong>추천 조건</strong>: 종목별 최소 5세션 이상 기록이 축적되고, 선형 회귀 모델의 결정계수(R²)가 60% 이상일 때 자동으로 추천 무게가 계산됩니다.
+          <strong>추천 조건</strong>: 종목별 최소 5세션 이상 기록이 축적되고, 선형 회귀 모델의 결정계수(R²)가 60% 이상일 때 자동으로 추천 무게가 계산됩니다.
         </div>
       </div>
     );
@@ -800,7 +982,7 @@ function MlPanel() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
           <div>
             <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-              💪 다음 세션 추천 무게
+              다음 세션 추천 무게
             </span>
             <div style={{ fontSize: 12, color: "var(--sub)", marginTop: 2 }}>
               선형 회귀 기반 | 5세션 이상 · 모델 신뢰도 60% 이상
@@ -904,7 +1086,7 @@ function MlPanel() {
       {/* 하단 데이터 현황 요약 */}
       <div className="ui-card" style={{ padding: "12px 16px", textAlign: "center" }}>
         <span style={{ color: "var(--sub)", fontSize: 12 }}>
-          총 {data.data_count}개 세트 분석 완료 · 데이터가 누적될수록 정확도가 향상됩니다 📈
+          총 {data.data_count}개 세트 분석 완료 · 데이터가 누적될수록 정확도가 향상됩니다
         </span>
       </div>
     </div>

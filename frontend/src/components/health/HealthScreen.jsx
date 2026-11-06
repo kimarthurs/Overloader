@@ -23,7 +23,9 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ClockIcon,
-  GripVerticalIcon
+  GripVerticalIcon,
+  SaveIcon,
+  CheckIcon
 } from "../common/Icons";
 
 const API = process.env.REACT_APP_API_URL;
@@ -124,6 +126,7 @@ function BodyPanel() {
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
+  const [viewMode, setViewMode] = useState("weight"); // "weight" | "muscle" | "both"
 
   const fetchLogs = () => {
     axios.get(`${API}/body`).then(res => setLogs(res.data)).catch(() => {});
@@ -134,16 +137,20 @@ function BodyPanel() {
   }, []);
 
   const save = async () => {
-    if (!weightKg && !bodyFat && !muscleKg) return;
+    if (!weightKg && !bodyFat && !muscleKg) {
+      alert("최소 1개 항목(몸무게, 체지방, 근육량)을 입력하세요.");
+      return;
+    }
     setSaving(true);
-    const p = new URLSearchParams();
-    if (weightKg) p.append("weight_kg", weightKg);
-    if (bodyFat) p.append("body_fat_pct", bodyFat);
-    if (muscleKg) p.append("muscle_kg", muscleKg);
-    if (memo) p.append("memo", memo);
-
     try {
-      await axios.post(`${API}/body?${p.toString()}`);
+      const today = new Date().toISOString().slice(0, 10);
+      await axios.post(`${API}/body`, {
+        date: today,
+        weight_kg: weightKg ? parseFloat(weightKg) : null,
+        body_fat_pct: bodyFat ? parseFloat(bodyFat) : null,
+        muscle_kg: muscleKg ? parseFloat(muscleKg) : null,
+        memo: memo || null,
+      });
       setDone(true);
       setWeightKg("");
       setBodyFat("");
@@ -168,16 +175,101 @@ function BodyPanel() {
     }
   };
 
-  // 차트 데이터 (오름차순)
+  // 안전한 로컬 타임존 날짜 파싱 헬퍼 (타임존 밀림 방지)
+  const parseLocalDateToTimestamp = (dateStr) => {
+    if (!dateStr) return 0;
+    const parts = String(dateStr).split("-").map(Number);
+    if (parts.length === 3) {
+      return new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+    }
+    return new Date(dateStr).getTime();
+  };
+
+  // 차트 데이터 (날짜 오름차순 및 타임스탬프 계산)
   const chartData = [...logs]
     .sort((a, b) => new Date(a.date) - new Date(b.date))
     .map(r => ({
       date: r.date.slice(5),
       fullDate: r.date,
-      몸무게: r.weight_kg != null ? Number(r.weight_kg) : null,
-      체지방률: r.body_fat_pct != null ? Number(r.body_fat_pct) : null,
-      근육량: r.muscle_kg != null ? Number(r.muscle_kg) : null,
+      timestamp: parseLocalDateToTimestamp(r.date),
+      weight: r.weight_kg != null ? Number(r.weight_kg) : null,
+      fat: r.body_fat_pct != null ? Number(r.body_fat_pct) : null,
+      muscle: r.muscle_kg != null ? Number(r.muscle_kg) : null,
+      memo: r.memo
     }));
+
+  // 도메인 계산 (미세 변동 스파이크 방지 최소 표시폭 보장)
+  const calculateDomain = (values, minSpan = 4) => {
+    const valid = values.filter(v => typeof v === "number" && !isNaN(v));
+    if (!valid.length) return [0, 100];
+    const minVal = Math.min(...valid);
+    const maxVal = Math.max(...valid);
+    const span = maxVal - minVal;
+    if (span < minSpan) {
+      const mid = (minVal + maxVal) / 2;
+      const half = minSpan / 2;
+      return [Math.floor(mid - half), Math.ceil(mid + half)];
+    }
+    const pad = Math.max(span * 0.15, 1);
+    return [Math.floor(minVal - pad), Math.ceil(maxVal + pad)];
+  };
+
+  const weightDomain = calculateDomain(chartData.map(d => d.weight), 4);
+  const muscleDomain = calculateDomain(chartData.map(d => d.muscle), 3);
+  const fatDomain = calculateDomain(chartData.map(d => d.fat), 4);
+  const bothDomain = calculateDomain([...chartData.map(d => d.weight), ...chartData.map(d => d.muscle)], 6);
+
+  // X축 시간 범위 (1개 지점 붕괴 방어)
+  let bodyXDomain = ["dataMin", "dataMax"];
+  if (chartData.length === 1) {
+    const ts = chartData[0].timestamp;
+    bodyXDomain = [ts - 86400000, ts + 86400000];
+  } else if (chartData.length > 1) {
+    const minTs = chartData[0].timestamp;
+    const maxTs = chartData[chartData.length - 1].timestamp;
+    const pad = Math.max((maxTs - minTs) * 0.05, 86400000);
+    bodyXDomain = [minTs - pad, maxTs + pad];
+  }
+
+  // 툴팁 렌더러
+  const renderBodyTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    const d = new Date(label);
+    const dateStr = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+    const rowMemo = payload[0]?.payload?.memo;
+    return (
+      <div
+        style={{
+          backgroundColor: "var(--card)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-inner)",
+          padding: "10px 12px",
+          boxShadow: "var(--shadow-card)",
+          fontSize: 12
+        }}
+      >
+        <div style={{ color: "var(--sub)", marginBottom: 6, fontWeight: 600 }}>{dateStr}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {payload.map((entry, idx) => (
+            <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, color: entry.color || "var(--text)" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: entry.color }} />
+                {entry.name}
+              </span>
+              <span style={{ fontWeight: 700, color: "var(--text)" }}>
+                {entry.value} {entry.dataKey === "fat" ? "%" : "kg"}
+              </span>
+            </div>
+          ))}
+          {rowMemo && (
+            <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 4, borderTop: "1px solid var(--border)", paddingTop: 4 }}>
+              {rowMemo}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -246,8 +338,20 @@ function BodyPanel() {
           />
         </div>
 
-        <button onClick={save} disabled={saving} style={{ ...S.btn(), width: "100%", padding: "12px" }}>
-          {saving ? "저장 중..." : done ? "✅ 저장 완료!" : "💾 저장"}
+        <button onClick={save} disabled={saving} style={{ ...S.btn(), width: "100%", padding: "12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          {saving ? (
+            "저장 중..."
+          ) : done ? (
+            <>
+              <CheckIcon size={16} />
+              <span>저장 완료!</span>
+            </>
+          ) : (
+            <>
+              <SaveIcon size={16} />
+              <span>저장</span>
+            </>
+          )}
         </button>
       </div>
 
@@ -255,45 +359,135 @@ function BodyPanel() {
         <>
           {/* 몸무게 · 근육량 추이 */}
           <div style={S.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <p style={{ ...S.sectionTitle, margin: 0 }}>몸무게 · 근육량 추이</p>
-              <span style={{ fontSize: 12, color: "var(--sub)" }}>단위: kg</span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+              <p style={{ ...S.sectionTitle, margin: 0 }}>
+                {viewMode === "weight" ? "체중 추이" : viewMode === "muscle" ? "골격근량 추이" : "체중 · 골격근량 추이"}
+              </p>
+              {/* 뷰 선택 토글 필 (체중 / 골격근량 / 함께 보기) */}
+              <div style={{ display: "flex", gap: 4, background: "var(--card-subtle)", padding: 3, borderRadius: "var(--radius-inner)", border: "1px solid var(--border)" }}>
+                {[
+                  { key: "weight", label: "체중" },
+                  { key: "muscle", label: "골격근량" },
+                  { key: "both", label: "함께 보기" }
+                ].map((m) => (
+                  <button
+                    key={m.key}
+                    type="button"
+                    onClick={() => setViewMode(m.key)}
+                    style={{
+                      border: "none",
+                      background: viewMode === m.key ? "var(--card)" : "transparent",
+                      color: viewMode === m.key ? "var(--text)" : "var(--sub)",
+                      fontWeight: viewMode === m.key ? 700 : 500,
+                      boxShadow: viewMode === m.key ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      transition: "all 0.15s ease"
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <ResponsiveContainer width="100%" height={230}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--sub)" }} />
-                <YAxis unit="kg" domain={["auto", "auto"]} tick={{ fontSize: 11, fill: "var(--sub)" }} />
-                <Tooltip
-                  contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10, color: "var(--text)" }}
-                  formatter={(v, n) => [`${v}kg`, n]}
+
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={chartData} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis
+                  dataKey="timestamp"
+                  type="number"
+                  scale="time"
+                  domain={bodyXDomain}
+                  tickFormatter={(ts) => {
+                    const d = new Date(ts);
+                    return `${d.getMonth() + 1}/${d.getDate()}`;
+                  }}
+                  tick={{ fontSize: 11, fill: "var(--sub)" }}
+                  tickLine={false}
+                  axisLine={{ stroke: "var(--border)" }}
                 />
+                <YAxis
+                  unit="kg"
+                  domain={viewMode === "weight" ? weightDomain : viewMode === "muscle" ? muscleDomain : bothDomain}
+                  tick={{ fontSize: 11, fill: "var(--sub)" }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip content={renderBodyTooltip} />
                 <Legend wrapperStyle={{ fontSize: 12, paddingTop: 6 }} />
-                <Line type="monotone" dataKey="몸무게" stroke="var(--accent)" strokeWidth={2.5} dot={{ r: 4 }} connectNulls />
-                {logs.some(r => r.muscle_kg) && (
-                  <Line type="monotone" dataKey="근육량" stroke="var(--success)" strokeWidth={2.5} dot={{ r: 4 }} connectNulls />
+                {(viewMode === "weight" || viewMode === "both") && (
+                  <Line
+                    type="monotone"
+                    dataKey="weight"
+                    name="체중"
+                    stroke="var(--accent)"
+                    strokeWidth={2.5}
+                    dot={{ r: 4, stroke: "var(--card)", strokeWidth: 1.5 }}
+                    activeDot={{ r: 6 }}
+                    connectNulls
+                  />
+                )}
+                {(viewMode === "muscle" || viewMode === "both") && (
+                  <Line
+                    type="monotone"
+                    dataKey="muscle"
+                    name="골격근량"
+                    stroke="var(--success)"
+                    strokeWidth={2.5}
+                    strokeDasharray={viewMode === "both" ? "4 4" : undefined}
+                    dot={{ r: 4, stroke: "var(--card)", strokeWidth: 1.5 }}
+                    activeDot={{ r: 6 }}
+                    connectNulls
+                  />
                 )}
               </LineChart>
             </ResponsiveContainer>
           </div>
 
           {/* 체지방률 추이 */}
-          {logs.some(r => r.body_fat_pct) && (
+          {logs.some(r => r.body_fat_pct != null) && (
             <div style={S.card}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <p style={{ ...S.sectionTitle, margin: 0 }}>체지방률 추이</p>
                 <span style={{ fontSize: 12, color: "var(--sub)" }}>단위: %</span>
               </div>
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--sub)" }} />
-                  <YAxis unit="%" domain={["auto", "auto"]} tick={{ fontSize: 11, fill: "var(--sub)" }} />
-                  <Tooltip
-                    contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10, color: "var(--text)" }}
-                    formatter={(v) => [`${v}%`, "체지방률"]}
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={chartData} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis
+                    dataKey="timestamp"
+                    type="number"
+                    scale="time"
+                    domain={bodyXDomain}
+                    tickFormatter={(ts) => {
+                      const d = new Date(ts);
+                      return `${d.getMonth() + 1}/${d.getDate()}`;
+                    }}
+                    tick={{ fontSize: 11, fill: "var(--sub)" }}
+                    tickLine={false}
+                    axisLine={{ stroke: "var(--border)" }}
                   />
-                  <Line type="monotone" dataKey="체지방률" stroke="#f43f5e" strokeWidth={2.5} dot={{ r: 4 }} connectNulls />
+                  <YAxis
+                    unit="%"
+                    domain={fatDomain}
+                    tick={{ fontSize: 11, fill: "var(--sub)" }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip content={renderBodyTooltip} />
+                  <Line
+                    type="monotone"
+                    dataKey="fat"
+                    name="체지방률"
+                    stroke="#f43f5e"
+                    strokeWidth={2.5}
+                    dot={{ r: 4, stroke: "var(--card)", strokeWidth: 1.5 }}
+                    activeDot={{ r: 6 }}
+                    connectNulls
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -329,6 +523,7 @@ function BodyPanel() {
                           onClick={() => deleteLog(r.id)}
                           style={{ background: "none", border: "none", color: "var(--sub)", cursor: "pointer", padding: 4 }}
                           title="삭제"
+                          aria-label="기록 삭제"
                         >
                           <TrashIcon size={15} color="var(--sub)" />
                         </button>
@@ -907,7 +1102,7 @@ function MealPanel() {
 
               {/* 템플릿 항목 추가 폼 */}
               <div style={S.card}>
-                <p style={S.sectionTitle}>➕ "{templateName}" 항목 추가</p>
+                <p style={S.sectionTitle}>"{templateName}" 항목 추가</p>
                 <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
                   {mealOrder.map(t => (
                     <button
@@ -971,7 +1166,7 @@ function MealPanel() {
                 />
 
                 <button onClick={saveTmplItem} disabled={tmplSaving} style={{ ...S.btn("var(--accent2)"), width: "100%" }}>
-                  {tmplSaving ? "저장 중..." : tmplDone ? "✅ 추가 완료!" : "➕ 항목 추가"}
+                  {tmplSaving ? "저장 중..." : tmplDone ? "✅ 추가 완료!" : "항목 추가"}
                 </button>
               </div>
             </>
@@ -1042,7 +1237,7 @@ function MealPanel() {
           {/* 음식 추가 폼 (토글) */}
           {showAddForm && (
             <div style={S.card}>
-              <p style={S.sectionTitle}>📝 식단 입력</p>
+              <p style={S.sectionTitle}>식단 입력</p>
               <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
                 {mealOrder.map(t => (
                   <button
@@ -1083,7 +1278,7 @@ function MealPanel() {
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setShowAddForm(false)} style={{ ...S.btnGhost, flex: 1 }}>취소</button>
                 <button onClick={save} disabled={saving} style={{ ...S.btn(), flex: 2 }}>
-                  {saving ? "저장 중..." : done ? "✅ 저장 완료!" : "💾 저장"}
+                  {saving ? "저장 중..." : done ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><CheckIcon size={16} /> 저장 완료!</span> : <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><SaveIcon size={16} /> 저장</span>}
                 </button>
               </div>
             </div>
@@ -1576,7 +1771,7 @@ function RoutinePanel() {
             >
               {editingId === r.id && editData ? (
                 <div>
-                  <p style={{ ...S.sectionTitle, marginBottom: 12 }}>✏️ 루틴 수정</p>
+                  <p style={{ ...S.sectionTitle, marginBottom: 12 }}>루틴 수정</p>
                   <input
                     value={editData.name}
                     onChange={(e) => setEditData((p) => ({ ...p, name: e.target.value }))}
@@ -1893,7 +2088,7 @@ function AiPanel() {
         </div>
 
         <button onClick={saveGoals} disabled={saving} style={{ ...S.btn(), width: "100%", padding: "12px" }}>
-          {saving ? "저장 중..." : saved ? "✅ 목표 저장 완료!" : "💾 목표 저장"}
+          {saving ? "저장 중..." : saved ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><CheckIcon size={16} /> 목표 저장 완료!</span> : <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><SaveIcon size={16} /> 목표 저장</span>}
         </button>
       </div>
 
@@ -1917,7 +2112,7 @@ function AiPanel() {
             marginBottom: result ? 16 : 0
           }}
         >
-          {loading ? "⏳ 분석 중... (10~20초)" : "✨ AI 분석 생성"}
+          {loading ? "분석 중... (10~20초)" : "AI 분석 생성"}
         </button>
 
         {result && (

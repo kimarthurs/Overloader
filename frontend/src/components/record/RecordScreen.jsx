@@ -1,15 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import {
-  DumbbellIcon,
-  RunnerIcon,
-  PlusIcon,
-  ArrowDownIcon,
-  TrashIcon,
-  ClockIcon,
-  CheckIcon,
-  FlameIcon
-} from "../common/Icons";
+import { DumbbellIcon, RunnerIcon, PlusIcon, ArrowDownIcon, TrashIcon, ClockIcon, CheckIcon, FlameIcon, SaveIcon, MapPinIcon, ZapIcon, GaugeIcon } from '../common/Icons';
 
 const API = process.env.REACT_APP_API_URL;
 
@@ -393,7 +384,7 @@ export default function RecordScreen({ onSaved }) {
           <div className="ui-card" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-                🏋️ 세트 입력
+                세트 입력
               </span>
               {workoutStartTime && (
                 <button
@@ -555,7 +546,7 @@ export default function RecordScreen({ onSaved }) {
                 style={{ flex: 1, padding: "12px 16px" }}
               >
                 <PlusIcon size={16} />
-                <span>+ 세트 추가</span>
+                <span>세트 추가</span>
               </button>
 
               <button
@@ -581,7 +572,7 @@ export default function RecordScreen({ onSaved }) {
             <div className="ui-card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-                  📋 이번 운동 세트 ({sets.length})
+                  이번 운동 세트
                 </span>
                 {sets.length > 0 && (
                   <span style={{ fontSize: 12, color: "var(--sub)" }}>
@@ -603,7 +594,7 @@ export default function RecordScreen({ onSaved }) {
                 >
                   <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>아직 추가된 세트가 없습니다</p>
                   <p style={{ margin: "6px 0 0", fontSize: 12 }}>
-                    운동명, 무게, 횟수를 입력하고 <strong>+ 세트 추가</strong>를 눌러주세요.
+                    운동명, 무게, 횟수를 입력하고 <strong>세트 추가</strong>를 눌러주세요.
                   </p>
                 </div>
               ) : (
@@ -664,6 +655,7 @@ export default function RecordScreen({ onSaved }) {
 
                         <button
                           type="button"
+                          aria-label="세트 삭제"
                           onClick={() => removeSet(i)}
                           style={{
                             background: "none",
@@ -706,7 +698,10 @@ export default function RecordScreen({ onSaved }) {
                     <CheckIcon size={16} /> 저장 완료!
                   </span>
                 ) : (
-                  <span>💾 세션 저장 ({sets.length}개 세트)</span>
+                  <>
+                    <SaveIcon size={16} />
+                    <span>세션 저장 ({sets.length}개 세트)</span>
+                  </>
                 )}
               </button>
             </div>
@@ -714,7 +709,7 @@ export default function RecordScreen({ onSaved }) {
             {/* 최근 근력 운동 요약 */}
             <div className="ui-card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>
-                💪 최근 운동 요약
+                최근 운동 요약
               </span>
 
               {recentLoading ? (
@@ -764,7 +759,7 @@ export default function RecordScreen({ onSaved }) {
       {mode === "cardio" && (
         <div className="ui-card" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <span style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>
-            🏃 유산소 운동 기록
+            유산소 운동 기록
           </span>
 
           {/* 종목 선택 필 칩 */}
@@ -913,11 +908,11 @@ export default function RecordScreen({ onSaved }) {
                 border: "1px solid var(--border)"
               }}
             >
-              <span className="record-chip active">🏃 {cardioName || "유산소"}</span>
-              {duration && <span className="record-chip">⏱ {duration}분</span>}
-              {distance && <span className="record-chip">📍 {distance}km</span>}
-              {pace && <span className="record-chip">⚡ 페이스 {pace}/km</span>}
-              {incline && <span className="record-chip">📐 경사 {incline}%</span>}
+              <span className="record-chip active"><RunnerIcon size={14} /> {cardioName || "유산소"}</span>
+              {duration && <span className="record-chip"><ClockIcon size={14} /> {duration}분</span>}
+              {distance && <span className="record-chip"><MapPinIcon size={14} /> {distance}km</span>}
+              {pace && <span className="record-chip"><ZapIcon size={14} /> 페이스 {pace}/km</span>}
+              {incline && <span className="record-chip"><GaugeIcon size={14} /> 경사 {incline}%</span>}
               {cardioKcal && (
                 <span className="record-chip" style={{ color: "var(--accent)" }}>
                   <FlameIcon size={14} /> {cardioKcal}kcal
@@ -946,7 +941,10 @@ export default function RecordScreen({ onSaved }) {
                 <CheckIcon size={16} /> 저장 완료!
               </span>
             ) : (
-              <span>🏃 유산소 기록 저장</span>
+              <>
+                <SaveIcon size={16} />
+                <span>유산소 기록 저장</span>
+              </>
             )}
           </button>
         </div>
