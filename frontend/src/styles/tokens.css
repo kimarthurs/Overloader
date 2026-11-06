@@ -1,6 +1,7 @@
 /* Overloader 디자인 토큰 및 공통 레이아웃 */
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0f0f12;
   --card: #18181f;
   --card-subtle: #121217;
@@ -24,6 +25,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #f5f5f7;
   --card: #ffffff;
   --card-subtle: #f9fafb;
@@ -228,9 +230,42 @@
   outline: none;
 }
 
+.record-input::placeholder {
+  color: var(--sub);
+  opacity: 0.7;
+}
+
 .record-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.record-date-input {
+  padding: 8px 12px;
+  background-color: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.record-date-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.record-date-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+
+.record-date-input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
 }
 
 .record-chip {

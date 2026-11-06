@@ -7,7 +7,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import psycopg2 
 from psycopg2 import pool
 import pandas as pd
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 import httpx
 from jose import jwt, JWTError
 import os
@@ -868,6 +868,44 @@ def get_1rm(user_id: int = Depends(get_current_user)):
     return df.loc[idx][['workout_name', '1rm', 'weight_kg', 'reps', 'date']].to_dict(orient='records')
 
 
+
+# 업무 기준 시간대 (KST, Asia/Seoul, UTC+9)
+BUSINESS_TZ = timezone(timedelta(hours=9))
+
+def get_business_today() -> date:
+    return datetime.now(BUSINESS_TZ).date()
+
+def validate_workout_date(date_str: str | None) -> date:
+    """
+    날짜 문자열을 검증하고 업무 시간대(Asia/Seoul, UTC+9) 기준으로 미래 날짜를 차단합니다.
+    date_str 생략 시 하위 호환을 위해 get_business_today()를 반환합니다.
+    """
+    if not date_str:
+        return get_business_today()
+
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        raise HTTPException(
+            status_code=400,
+            detail="유효하지 않은 날짜 형식입니다. (YYYY-MM-DD 형식 필요)"
+        )
+
+    try:
+        parsed_date = date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="달력에 존재하지 않는 유효하지 않은 날짜입니다."
+        )
+
+    today_kst = get_business_today()
+    if parsed_date > today_kst:
+        raise HTTPException(
+            status_code=400,
+            detail=f"미래 날짜의 운동 기록은 저장할 수 없습니다. (기준일: {today_kst})"
+        )
+
+    return parsed_date
+
 @app.post("/record")
 async def post_record(
     workout_name: str,
@@ -877,12 +915,14 @@ async def post_record(
     duration_sec: int | None = None,
     set_type: str = "normal",
     set_group: str | None = None,
+    date_str: str | None = None,
     user_id: int = Depends(get_current_user)
 ):
     conn = get_conn()
     cur = conn.cursor()
 
     try:
+        log_date = validate_workout_date(date_str)
         parsed_weight, parsed_unit = parse_weight_input(weight_kg)
         workout_name = normalize_workout_name(workout_name)
 
@@ -903,7 +943,7 @@ async def post_record(
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (
             user_id,
-            date.today(),
+            log_date,
             workout_name,
             parsed_weight,
             reps,
@@ -926,20 +966,19 @@ async def post_record(
     telegram_chat_id = row[0] if row else None
     discord_webhook_url = row[1] if row else None
     
+    today_kst = get_business_today()
+    date_notice = "" if log_date == today_kst else f" ({log_date} 기록)"
+
     if parsed_unit == "lbs":
-
         original_lbs = round(parsed_weight / 0.453592, 1)
-
         msg = (
-            f"💪 운동 기록!\n"
+            f"💪 운동 기록!{date_notice}\n"
             f"{workout_name} "
             f"{original_lbs}lbs ({parsed_weight}kg) × {reps}회"
         )
-
     else:
-
         msg = (
-            f"💪 운동 기록!\n"
+            f"💪 운동 기록!{date_notice}\n"
             f"{workout_name} {parsed_weight}kg × {reps}회"
         )
 
@@ -1499,7 +1538,7 @@ def post_cardio(
     conn = get_conn()
     cur = conn.cursor()
     try:
-        log_date = date_str if date_str else str(date.today())
+        log_date = validate_workout_date(date_str)
         cur.execute("""
             INSERT INTO cardio_logs
                 (user_id, date, cardio_name, duration_min, distance_km, pace, incline, kcal, memo)
