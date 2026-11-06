@@ -28,7 +28,7 @@ import {
   CheckIcon
 } from "../common/Icons";
 
-const API = process.env.REACT_APP_API_URL;
+const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
 // 공통 카드/인풋 스타일 헬퍼
 const S = {

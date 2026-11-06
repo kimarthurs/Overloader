@@ -2,8 +2,6 @@ import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
   SettingsIcon,
-  UserIcon,
-  LogoutIcon,
   MoonIcon,
   SunIcon,
   FlameIcon,
@@ -22,8 +20,9 @@ import {
   applyAccentColor,
   getSavedAccentColor
 } from "../../utils/accentColor";
+import AccountManagementCard from "./AccountManagementCard";
 
-const API = process.env.REACT_APP_API_URL;
+const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
 const S = {
   card: {
@@ -266,44 +265,8 @@ export default function SettingsScreen({
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* 1. 계정 카드 */}
-          <div style={S.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-                <div style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  background: "var(--input-bg)",
-                  border: "1px solid var(--border)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "var(--sub)",
-                  flexShrink: 0
-                }}>
-                  <UserIcon size={22} color="var(--sub)" />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 16, fontWeight: "700", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {userName || "사용자"}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--sub)", marginTop: 2 }}>
-                    기존 Google 계정 · JWT 세션을 사용합니다.
-                  </div>
-                </div>
-              </div>
-
-              <button
-                onClick={onLogout}
-                style={{ ...S.btnGhost, padding: "8px 14px", flexShrink: 0 }}
-                title="로그아웃"
-              >
-                <LogoutIcon size={16} color="var(--sub)" />
-                <span>로그아웃</span>
-              </button>
-            </div>
-          </div>
+          {/* 1. 계정 및 로그인 수단 관리 카드 */}
+          <AccountManagementCard userName={userName} onLogout={onLogout} />
 
           {/* 2. 화면 테마 (다크/라이트 모드) */}
           <div style={S.card}>

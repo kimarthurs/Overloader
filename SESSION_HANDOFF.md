@@ -286,7 +286,137 @@
      - 따라서 향후 로컬 Git 브랜치에서 `git reset`이나 `git revert`를 수행하더라도 클라우드 DB는 롤백되지 않으며, DB 롤백이 필요할 경우 역방향 DDL 실행 또는 사전 생성된 외부 백업 덤프 복원을 통해서만 가능합니다.
    * **검증 범위 및 한계 엄격 준수**:
      - 본 작업은 **'운영 DB 스키마 생성 및 Google 계정 백필 완료'** 단계에 한정됩니다.
-     - 실제 사용자 로그인 기능(아이디/비밀번호, Google, Naver) 및 프론트엔드/백엔드 인증 코드 변경은 아직 진행되지 않았으므로(Step D 대상), 로그인 기능까지 검증 완료된 것으로 확대 해석하지 않습니다.
+     - **사용자 로컬 브라우저 검증 (2026-11-06)**: `localhost` 환경에서 로그아웃 후 기존 Google 계정으로 정상 재로그인되는 것을 브라우저에서 직접 확인 완료.
+     - **운영 배포 환경 미검증 유지**: 위 확인은 로컬 구동 기준이며, 실제 운영 배포 환경(`https://app.overloader.cloud`)에서의 동작 확인은 아니므로 배포 환경 검증으로 확대 해석하지 않고 엄격히 구분하여 미검증 유지.
      - 기존 서비스 안정성을 위해 `users.google_id` 컬럼은 그대로 유지되어 현재 프로덕션 인증 흐름에 영향을 주지 않습니다.
+     - 실제 사용자 로그인 기능(아이디/비밀번호 신규 가입, Naver 연동 등 Step D 대상)은 아직 구현 전입니다.
 
+8. **Step D (통합 계정 관리 및 일회성 저장소) 로컬 DB 동시성 검증 완료 및 계정 관리 로직 확장 (2026-11-06)**:
+   * **적용 대상 및 환경**:
+     - 사용자 PC 격리 로컬 전용 테스트 DB: `127.0.0.1:5433 / overloaderdb_stepd_test` (template0 기반 신규 생성, Step C 백업 복원 및 DDL 적용).
+     - 기존 복원본(`overloaderdb_stepc_restore_test`) 및 운영 Azure DB(`overloaderdb`)는 일체 변경 없이 보존.
+   * **사용자 직접 실행 및 검증 결과 (JUnit XML 기반 엄격 검증)**:
+     - 실행 스크립트: `powershell -ExecutionPolicy Bypass -File scripts\run_step_d_local_tests.ps1 -TestOnly`
+     - 테스트 결과: **8 passed, 1 warning (failures 0, errors 0, skipped 0)** 확인 완료.
+     - **실제 실행된 8개 테스트 및 검증 범위**:
+       1. `test_concurrent_reauth_ticket_consumption_exactly_one_succeeds`: 2개 동시 작업 스레드가 동일한 재인증 티켓 jti 소비 시 `SELECT FOR UPDATE`에 의해 정확히 1건만 성공하고 1건은 `TokenAlreadyConsumedError`로 차단됨을 검증.
+       2. `test_concurrent_oauth_exchange_code_consumption_exactly_one_succeeds`: 2개 동시 작업 스레드가 동일한 OAuth 교환 코드 소비 시 정확히 1건만 성공하고 1건은 `TokenAlreadyConsumedError`로 차단됨을 검증.
+       3. `test_transaction_rollback_preserves_unconsumed_ticket`: 트랜잭션 롤백 시 티켓 소비(`consumed_at`)도 함께 롤백되어 미소비 상태로 안전하게 보존됨을 검증.
+       4. `test_password_change_revokes_previous_jwt_and_reauth_tickets`: `change_password_credential` 실행 후 `token_version` 증가 확인, 이전 발급 access JWT 거부(`TokenVersionMismatchError`), 기존 미소비 재인증 티켓 거부(`TokenBindingMismatchError`) 검증.
+       5. `test_concurrent_unlink_last_method_protection`: 복제 SQL이 아닌 라우터가 사용하는 공용 서비스 함수(`unlink_password_credential`, `unlink_social_account`)를 2개 스레드가 동시 호출하여, 행 잠금 하에 정확히 1건만 성공하고 1건은 `LastLoginMethodError`로 차단되며 남은 로그인 수단이 정확히 1개 유지됨을 검증.
+       6. `test_reauth_ticket_cross_user_session_purpose_rejected`: 타 사용자, 타 세션, 타 목적 티켓 불일치 거부 검증.
+       7. `test_username_unique_collision_and_id_preservation`: 아이디 중복 등록 거부 및 기존 계정 무결성 보존 검증.
+       8. `test_cleanup_expired_tokens`: 만료 및 1시간 초과 소비 토큰 정리 검증.
+   * **경고 1건 확인**:
+     - 서드파티 라이브러리 `anyio`의 pytest 플러그인 상위 호환성 사전 알림(`anyio/pytest_plugin.py:14: PytestRemovedIn10Warning: _pytest.python.CallSpec2 has been renamed to CallSpec`)으로, 기존에 확인된 경고와 동일하며 프로젝트 로직 및 실행 결과에 영향 없음.
+   * **Step D 로컬 풀 번들 구현 완료 (2026-11-06)**:
+     - **백엔드 (`backend/auth_router.py`, `backend/auth_service.py`)**:
+       - Google/Naver OAuth 흐름 (login, link, reauth) 및 로컬 모의 제공자(`mock-consent`, `mock_code`) 구현.
+       - 일회용 교환 코드 교환 엔드포인트(`POST /auth/v2/oauth/exchange`): URL 노출 없이 본문으로 JWT 반환, 원자적 1회 소비 및 60초 TTL 보장.
+       - 소셜 재인증 기반 비밀번호 재설정(`POST /auth/v2/account/password/reset`): 소셜 본인인증 티켓 검증 후 비밀번호 갱신 및 `token_version` 증가.
+       - 계정 관리 공용 서비스: `reset_password_credential`, `change_password_credential`, `add_password_credential`, `unlink_social_account`, `unlink_password_credential`, `get_account_methods_summary`.
+        - 실제 Naver OAuth 연동 (`backend/auth_router.py`):
+          - 인가 redirect_uri를 백엔드 콜백(`http://127.0.0.1:8000/auth/v2/oauth/naver/callback`)으로 고정 (클라이언트 임의 지정 차단).
+          - 실제 인가코드 수신 시 네이버 토큰 교환(`https://nid.naver.com/oauth2.0/token`) 및 프로필 조회(`https://openapi.naver.com/v1/nid/me`) 비동기(httpx) 구현.
+          - 네이버 고유 ID(`response.id`) 기준 계정 식별 및 이메일 미제공(None) 상태 정상 로그인/가입 지원.
+          - 모의 제공자 보안 가드: 운영 환경(`ENV=production` 또는 `VERCEL`) 및 `USE_MOCK_OAUTH=false` 상태에서 요청의 `mock=true`나 `mock_uid`/`mock_code` 전송 시 403 Forbidden 즉시 차단.
+        - 단위 테스트: `tests/test_auth_utils.py` (38건) + `tests/test_auth_router.py` (23건) = **61건 전건 통과**.
+     - **프론트엔드 (`frontend/src/`)**:
+       - `AuthScreen.jsx`:
+         1. **브랜드 아이콘 및 헤더**: `design-reference/login.jpg` 시안을 반영하여 `⚡` 배지 대신 기존 오버로더 사이버 하트 로고 asset(`logo.png`)을 제목 위에 표시, 부제목을 "스마트한 운동기록 대시보드로 나의 헬스를 더 스마트하게!"로 통일, 모바일 반응형 비율 보존.
+         2. **회원가입 아이디/이메일 분리**:
+            - 아이디: 기본 안내(`아이디는 영문·숫자·밑줄(_)을 사용한 4~20자로 입력해 주세요.`), `@` 입력 시 즉시 차단 안내(`아이디에는 이메일 주소를 사용할 수 없습니다. 이메일은 아래 선택 입력란에 입력해 주세요.`) 실시간 반영.
+            - 이메일 (선택): 입력 필드 추가, 미입력 시에도 가입 가능, 이메일 중복 차단 제약 없음(고유 제약 없음), 안내(`선택 입력이며, 현재 이메일 인증·비밀번호 복구에는 사용되지 않습니다.`), 최대 255자 및 정규식 백엔드(`POST /auth/v2/register`)와 동기화 검증, DB `users.email`에 저장 및 `email_verified = false` 유지.
+         3. **닉네임 표기 통일**: 사용자 화면 전반(회원가입, 입력 라벨, 플레이스홀더, 오류 메시지, 모의 동의 화면)의 '표시 이름' 표기를 '닉네임'으로 통일 (DB `users.name` 컬럼 및 API 필드명은 유지).
+         4. 소셜 재인증 비밀번호 재설정, OAuth 교환 코드 자동 수신 및 세션 초기화 연동 완료.
+       - `AccountManagementCard.jsx`: 설정 화면 내 로그인 수단 목록(아이디/비밀번호, Google, Naver) 조회, 비밀번호 변경 모달(재인증+5대조건), 아이디/비밀번호 등록 모달, 소셜 연동/해제(마지막 수단 보호 적용).
+       - 프로덕션 빌드 검증: `npm run build` 컴파일 성공 (경고 0건, 오류 0건).
+     - **로컬 검증 실행 스크립트**:
+       - `scripts/start_local_dev.ps1`: 로컬 DB(`127.0.0.1:5433 / overloaderdb_stepd_test`) 안전 비밀번호 입력 및 모의 OAuth(`USE_MOCK_OAUTH=true`) 환경 FastAPI 서버 실행 스크립트 (PowerShell AST 검증 통과).
+   * **검증 범위 및 보안 제약 준수**:
+     - 운영 Azure DB(`overloader.postgres.database.azure.com`) 절대 미접속.
+     - 기존 프로덕션 `/auth/google` 엔드포인트 무변경 보존.
+     - 외부 Google/Naver 라이브 네트워크 호출 없이 로컬 모의 환경으로 격리.
+     - Git 커밋/푸시/병합/배포 미수행.
 
+9. **로컬 OAuth 인가 버튼 404 원인 진단 및 해결 완료 (2026-11-06)**:
+   * **원인 진단 (Root Cause)**:
+     - `start_local_dev.ps1`이 `backend` 디렉터리로 이동하여 `uvicorn main:app`을 실행함에 따라 `sys.path[0]`이 `backend/`로 설정됨.
+     - `backend/main.py` 내부의 `from backend.auth_router import create_auth_router`가 `ModuleNotFoundError: No module named 'backend'`를 발생시키고, `except Exception` 블록에서 경고만 출력한 뒤 조용히 무시되어 `auth_v2_router`가 FastAPI 앱에 마운트되지 않음.
+     - 결과적으로 브라우저에서 버튼 클릭 시 `GET /auth/v2/oauth/{provider}/authorize` 요청이 FastAPI 기본 404(`{"detail":"Not Found"}`)를 반환함.
+   * **수정 조치**:
+     1. **Import 경로 정상화 (`backend/main.py`)**:
+        - 파일 최상단에서 `sys.path`에 프로젝트 루트와 `backend/` 디렉터리를 모두 주입하여 실행 위치(루트 또는 `backend/`)와 무관하게 `backend.*` 및 일반 모듈 임포트가 모두 성공하도록 조치.
+        - `backend/auth_router.py`, `backend/auth_service.py` 내부 임포트에 `try ... except ImportError:` 이중 안전 가드 적용.
+        - 라우터 마운트 시 `try-except Exception` 예외 삼킴을 제거하여 라우터 생성 실패 시 즉시 에러가 표출되도록 개선.
+     2. **운영 Azure DB 자동 fallback 방지 가드 (`backend/main.py`)**:
+        - `DB_HOST` 환경변수가 누락된 비운영(local/dev) 환경에서 운영 Azure DB(`overloader.postgres.database.azure.com`)로 자동 연결되는 것을 차단하고 즉시 `RuntimeError`로 서버 시작을 중단하도록 방어 로직 추가.
+     3. **Google OAuth 대기(pending) 상태 명확화**:
+        - 네이버 개발자센터 설정만 등록된 현 단계에서 Real OAuth 모드 시 Google 인가 요청에 대해 조용히 mock으로 fallback하지 않고 `error=google_oauth_pending`으로 명확히 리다이렉트.
+        - `AuthScreen.jsx` 및 `AccountManagementCard.jsx`에서 `google_oauth_pending` 감지 시 "구글 소셜 로그인은 연동 준비 중입니다. 현재는 네이버 로그인 및 일반 아이디/비밀번호 로그인을 지원합니다." 안내 메시지 표출.
+     4. **종속성 패키지 동기화 (`backend/requirements.txt`)**:
+        - Python 3.11 환경에 `pandas`, `scikit-learn`, `slowapi`, `matplotlib`, `python-telegram-bot` 설치 완료.
+        - `tests/conftest.py` 추가를 통해 `sys.path` 경로를 테스트 환경에서도 자동 주입.
+   * **검증 결과**:
+     - `pytest tests/test_auth_utils.py tests/test_auth_router.py`: **61 passed, 1 warning (100% 통과, failures 0, errors 0, skipped 0)**.
+     - 실 앱 라우트 마운트 검증: 총 59개 라우트 중 `/auth/v2` 14개 엔드포인트 정상 마운트 확인.
+     - 기존 프로덕션 `/auth/google` POST 라우트 보존 확인.
+     - TestClient 기반 실 라우트 인가 리다이렉트 검증:
+       - Naver 인가 시작 (`GET /auth/v2/oauth/naver/authorize`): 307 Redirect -> `https://nid.naver.com/oauth2.0/authorize?response_type=code&...` 확인 완료.
+       - Google 인가 시작 (`GET /auth/v2/oauth/google/authorize`): 307 Redirect -> `http://127.0.0.1:3000?error=google_oauth_pending` 확인 완료.
+     - 루트 `.env` 명시적 로드 검증: Git 미추적(`.gitignore` 무시 목록 등록) 확인 완료, `override=False`를 통해 로컬 테스트 DB 환경변수 보존 확인, Naver 3대 환경변수(`NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`, `NAVER_CALLBACK_URL`) 설정 여부 확인(비밀값 미노출).
+     - scripts/start_local_dev.ps1 인코딩 정상화: Windows PowerShell 5.1 호환을 위해 정상 한글 원문을 UTF-8 with BOM으로 저장, AST 구문 0 오류 및 PowerShell 출력 한글 무손상 검증 완료.
+
+10. **로컬 127.0.0.1 단일 주소 체계 확정 및 프론트엔드 환경설정 (2026-11-06)**:
+    * **주소 체계 통일 결정 및 검증 결과**:
+      - 사용자 브라우저 확인 결과:
+        - http://localhost:3000: 네이버 개발자센터 미등록 사이트 오류 발생.
+        - http://127.0.0.1:3000: 실제 네이버 로그인 인가 화면 정상 진입 및 로그인 절차 진행 확인.
+      - 정책 확정: 로컬 브라우저 및 백엔드 접속 주소는 127.0.0.1 기준으로 완전 단일화.
+      - 임의 확장 금지: localhost 지원을 위해 네이버 개발자센터 설정이나 OAuth 허용 목록을 임의로 변경/확장하지 않음.
+    * **프론트엔드 자동 열기 주소 반영**:
+      - rontend/.env.development 생성 (Git 무시 목록에 포함):
+        - HOST=127.0.0.1
+        - REACT_APP_API_URL=http://127.0.0.1:8000
+      - 효과: cd frontend; npm start 실행 시 브라우저가 자동으로 http://127.0.0.1:3000으로 열리도록 구성.
+      - 실행 안내: scripts/start_local_dev.ps1의 브라우저 안내 주소(http://127.0.0.1:3000)와 완전 일치.
+
+11. **메인 화면 복귀 직후 세션 만료(401) 원인 진단 및 해결 (2026-11-06)**:
+    * **원인 추적 및 진단 (Root Cause)**:
+      1. /auth/v2/oauth/exchange는 정상 성공하여 유효한 access JWT가 발급되고 localStorage 및 xios.defaults에 즉시 저장됨.
+      2. 메인 대시보드 마운트 직후 GET /last-workout, GET /logs, GET /settings 등 보호 API가 올바른 Authorization: Bearer <token> 헤더를 포함하여 호출됨.
+      3. 그러나 기존 ackend/main.py의 get_current_user는 jwt.decode(token, JWT_SECRET, algorithms=['HS256'])만 호출하고 udience를 전달하지 않았음.
+      4. Step D 토큰에 ud='overloader-app' 클레임이 포함되어 있어, python-jose 디코더가 jose.exceptions.JWTClaimsError: Invalid audience 예외를 발생시키고 401 Unauthorized를 반환함.
+      5. 프론트엔드 공통 인터셉터(rontend/src/auth.js)가 보호 API의 401 응답을 감지하여 performLogout({ expired: true })를 실행하고 '로그인이 만료되었어요. 다시 로그인해 주세요.' 경고창을 표시하며 토큰을 초기화함.
+    * **수정 조치**:
+      1. ackend/auth_utils.py의 decode_and_validate_access_token:
+         - 토큰에 ud/iss가 포함되어 있을 경우 JWT_AUDIENCE('overloader-app') 및 JWT_ISSUER('overloader')를 정확히 대조 검증하도록 정상화. (위조/불일치 시 401 차단 유지).
+      2. ackend/main.py의 get_current_user:
+         - decode_and_validate_access_token을 활용하여 서명(HS256), 만료(exp), 대상(aud), 발급자(iss), 토큰 타입(type='access'), 토큰 버전(ver vs DB users.token_version) 전 항목을 엄격 검증하도록 개선.
+         - 레거시 토큰(er/ud 미포함 기존 Google 로그인 토큰)도 하위 호환 검증 지원.
+         - DB 일시 장애 발생 시 401이 아닌 503(인증 데이터베이스 일시 장애)을 반환하여 불필요한 자동 로그아웃 방지.
+      3. 프론트엔드 API 주소 폴백 일원화:
+         - App.js, HomeScreen.jsx, RecordScreen.jsx, SavedLogsAccordion.jsx, CalendarScreen.jsx, AnalyticsScreen.jsx, HealthScreen.jsx, SettingsScreen.jsx 전 화면에 process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000' 폴백 적용.
+
+12. **사용자 브라우저 실검증 완료 내역 및 다음 작업 인계 사항 (2026-11-06)**:
+    * **사용자 브라우저 직접 검증 완료 범위**:
+      - 로컬 실제 네이버 OAuth 로그인 (http://127.0.0.1:3000 -> https://nid.naver.com/...) -> 백엔드 콜백 (/auth/v2/oauth/naver/callback) -> 일회용 교환 코드 발급 및 전달 -> 프론트엔드 코드 교환 (/auth/v2/oauth/exchange) -> JWT 저장 -> **메인 대시보드 정상 로드 및 보호 API 데이터 표시까지 브라우저에서 직접 정상 동작 확인 완료**.
+      - 원인이었던 새 JWT udience와 기존 보호 API 디코더 간 불일치가 인증 통합 수정 후 완벽히 해소됨을 확인.
+    * **테스트 실행 기록 (엄격 구분)**:
+      - 단위 및 통합 테스트: **66 passed, 8 skipped (100% 통과)**.
+      - **구분 명시**: 앞서 사용자가 격리 DB(overloaderdb_stepd_test)에서 직접 실행하여 통과한 8개 PostgreSQL 동시성 테스트(
+un_step_d_local_tests.ps1 -TestOnly)와, 이번 단위/통합 테스트에서 실 DB 미연결로 자동 스킵된 8건(	ests/test_pg_concurrency.py)은 서로 명확히 구분됨.
+      - **표현 주의**: 브라우저 자동화 도구(Selenium/Playwright 등)를 통한 자동 E2E가 아니므로, TestClient 기반 백엔드 API 통합 테스트와 사용자 수동 브라우저 검증을 명확히 구분하여 기록.
+    * **미검증 및 미완료 항목 (확대 금지)**:
+      - 실제 Google 새 OAuth 인가코드 흐름: Google Cloud Console 등록 준비 상태로 보류 중.
+      - 브라우저 상의 전체 계정 관리 UI 기능(비밀번호 추가/변경/소셜 해제): 사용자 브라우저 수동 검증 대기.
+      - 운영 Step D 배포: 운영 Azure DB 및 프로덕션 환경(https://app.overloader.cloud)에는 일체 미적용 상태 유지.
+    * **다음 작업 시 주의사항 및 검토 과제 (당일 추가 리팩터링 금지 준수)**:
+      1. **레거시 JWT 허용 정책 검토**:
+         - 본래 새 인증 전환 계획은 er 없는 레거시 JWT를 거부하는 방향이었으나, 기존 서비스 연속성을 위해 레거시 토큰을 수용하도록 처리되었음.
+         - 다음 작업에서 레거시 토큰 허용 범위, 지원 종료 조건(Sunset 일정), 그리고 	oken_version 무효화 우회 가능성(레거시 토큰 위조 방지 등)을 심층 검토해야 함. (당일 추가 인증 정책 변경이나 리팩터링은 진행하지 않음).
+      2. **운영 DB 스키마 및 마이그레이션**:
+         - 현재 운영 DB(overloaderdb)에는 Step C(테이블 구조 및 Google 계정 백필)까지만 영구 적용된 상태임.
+         - 향후 Step D 백엔드 코드를 운영에 배포하기 전에 추가 스키마 점검, 환경변수 설정, 전환 절차를 사전 승인받은 뒤 단계별로 진행해야 함.
+      3. **프론트엔드 환경변수 및 빌드**:
+         - 로컬 개발 환경 기본 API 주소(http://127.0.0.1:8000)와 프로덕션 빌드 환경변수(https://api.overloader.cloud)의 분리 상태를 배포 전 재확인할 것.

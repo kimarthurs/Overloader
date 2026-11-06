@@ -20,7 +20,7 @@ import {
   BoltIcon
 } from "../common/Icons";
 
-const API = process.env.REACT_APP_API_URL;
+const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
 // 카테고리 정의 (기존 TrendsTab과 100% 동일한 분류 보존)
 const CATEGORIES = {

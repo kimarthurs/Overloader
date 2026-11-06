@@ -14,3 +14,4 @@ pandas>=2.0.0,<3.0.0
 numpy>=1.24.0,<3.0.0
 python-telegram-bot>=20.7,<22.0
 matplotlib>=3.7.0,<4.0.0
+argon2-cffi>=23.1.0

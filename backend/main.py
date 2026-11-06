@@ -1,3 +1,13 @@
+import sys
+import os
+
+_cur_dir = os.path.dirname(os.path.abspath(__file__))
+_root_dir = os.path.dirname(_cur_dir)
+if _cur_dir not in sys.path:
+    sys.path.insert(0, _cur_dir)
+if _root_dir not in sys.path:
+    sys.path.insert(0, _root_dir)
+
 import re
 import unicodedata
 from typing import Optional
@@ -36,7 +46,11 @@ from workout_utils import (
 
 
 
-load_dotenv()
+_root_env = os.path.join(_root_dir, ".env")
+if os.path.exists(_root_env):
+    load_dotenv(dotenv_path=_root_env, override=False)
+else:
+    load_dotenv(override=False)
 class DiscordWebhookBody(BaseModel):
     webhook_url: str = Field(default="")
 
@@ -155,12 +169,24 @@ app.add_middleware(
 app.add_middleware(SlowAPIMiddleware)
 
 
+db_host = os.getenv("DB_HOST")
+if not db_host:
+    env_name = os.getenv("ENV", os.getenv("APP_ENV", "")).lower()
+    is_cloud_prod = (env_name in ("production", "prod")) or (os.getenv("VERCEL") is not None)
+    if not is_cloud_prod:
+        raise RuntimeError(
+            "DB_HOST 환경변수가 설정되지 않았습니다. 운영 Azure DB로의 의도치 않은 자동 접속을 차단합니다. "
+            "(로컬 환경에서는 scripts/start_local_dev.ps1을 사용하거나 DB_HOST=127.0.0.1 환경변수를 지정하세요.)"
+        )
+    db_host = "overloader.postgres.database.azure.com"
+
 DB_CONFIG = {
-    "host": "overloader.postgres.database.azure.com",
-    "database": "overloaderdb",
-    "user": "margaron55",
+    "host": db_host,
+    "port": int(os.getenv("DB_PORT", "5432")),
+    "database": os.getenv("DB_NAME", "overloaderdb"),
+    "user": os.getenv("DB_USER", "margaron55"),
     "password": os.getenv("DB_PASSWORD"),
-    "sslmode": "require"
+    "sslmode": os.getenv("DB_SSLMODE", "require")
 }
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -178,6 +204,14 @@ def get_conn():
 def release_conn(conn):
     db_pool.putconn(conn)
 
+try:
+    from auth_router import create_auth_router
+except ImportError:
+    from backend.auth_router import create_auth_router
+
+auth_v2_router = create_auth_router(get_conn, release_conn)
+app.include_router(auth_v2_router)
+
 
 def create_jwt(user_id: int) -> str:
     now = datetime.utcnow()
@@ -191,10 +225,59 @@ def create_jwt(user_id: int) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return payload["user_id"]
-    except JWTError:
+        try:
+            from auth_utils import (
+                decode_and_validate_access_token,
+                TokenValidationError,
+                TokenExpiredError,
+                TokenTypeMismatchError,
+                TokenVersionMismatchError,
+            )
+        except ImportError:
+            from backend.auth_utils import (
+                decode_and_validate_access_token,
+                TokenValidationError,
+                TokenExpiredError,
+                TokenTypeMismatchError,
+                TokenVersionMismatchError,
+            )
+
+        # 1. 헤더 및 클레임 안전 조회
+        unverified_claims = jwt.get_unverified_claims(token)
+        has_ver = "ver" in unverified_claims
+
+        # 2. Step D 토큰인 경우 (ver 포함): DB에서 user의 token_version을 조회하여 원자적 검증
+        expected_version = None
+        if has_ver:
+            uid = unverified_claims.get("user_id") or unverified_claims.get("sub")
+            if uid:
+                conn = get_conn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT token_version FROM users WHERE id = %s", (int(uid),))
+                        row = cur.fetchone()
+                        if row:
+                            expected_version = row[0]
+                finally:
+                    release_conn(conn)
+
+        payload = decode_and_validate_access_token(
+            token=token,
+            expected_token_version=expected_version,
+            allow_legacy_no_version=True,
+        )
+        return int(payload["user_id"])
+    except TokenExpiredError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except TokenVersionMismatchError:
+        raise HTTPException(status_code=401, detail="Token version revoked")
+    except (TokenTypeMismatchError, TokenValidationError, JWTError) as e:
+        raise HTTPException(status_code=401, detail=f"Token invalid: {e}")
+    except (psycopg2.OperationalError, psycopg2.DatabaseError):
+        raise HTTPException(status_code=503, detail="인증 데이터베이스 일시 장애")
+    except Exception:
         raise HTTPException(status_code=401, detail="Token expired or invalid")
 
 # ── 구글 로그인 ──

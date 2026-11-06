@@ -11,7 +11,7 @@ import {
   SettingsIcon
 } from "../common/Icons";
 
-const API = process.env.REACT_APP_API_URL;
+const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
 // 로컬 시간대 기준 YYYY-MM-DD 및 YYYY-MM 산출 헬퍼
 function getLocalDateStr(d = new Date()) {

@@ -10,7 +10,7 @@ import {
   CalendarIcon
 } from "../common/Icons";
 
-const API = process.env.REACT_APP_API_URL;
+const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
 const WEEKDAYS = [
   { label: "일", color: "#ef4444" },

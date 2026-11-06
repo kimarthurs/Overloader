@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon, AlertTriangleIcon, RefreshIcon } from "../common/Icons";
 
-const API = process.env.REACT_APP_API_URL;
+const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 
 export default function SavedLogsAccordion({ date, mode, refreshTrigger }) {
   const [isOpen, setIsOpen] = useState(false);
