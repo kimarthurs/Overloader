@@ -212,19 +212,81 @@
      - `RecordScreen.jsx`: 근력(운동명, 무게, 횟수) 및 유산소(종목명, 시간, 거리, 페이스, 경사도, 칼로리, 메모) 총 10개 입력창에 `className="record-input"` 복원. 하단 제목을 `작성 중인 세트`로 변경하고 보조 캡션 `아직 서버에 저장되지 않은 초안입니다` 추가.
      - `DateSelector.jsx`: `<input type="date">`에 `className="record-date-input"` 적용하여 다크 테마에서 달력 아이콘과 날짜 텍스트의 고대비 시인성 및 일관된 패딩/모서리 확보.
      - `SavedLogsAccordion.jsx`: 서버 저장 기록이 0건일 때도 `이 날짜에 저장된 기록 (0건) · 서버에 저장된 기록이 없습니다` 상태 카드를 명시하여 로딩/실패/0건/저장완료(N건) 상태를 사용자가 명확히 구분할 수 있도록 개선 (미저장 초안 목록과 완전 분리 유지).
-   * **검증 상태 구분 (엄격 분리)**:
-     1. [검증 완료] **사용자 브라우저 UI 육안 확인**: 기록 탭 다크 테마 입력창 룩앤필(배경/테두리/반경/포커스), 날짜 피커 달력 아이콘 시인성, '작성 중인 세트' 제목 및 보조 캡션, 서버 기록 카드 분리 정상 확인 및 사용자 승인 완료.
-     2. [검증 완료] **빌드 및 시뮬레이션 테스트 통과**:
-        - 프론트엔드 빌드(`npm run build`) 경고 및 에러 0건 성공 (`Compiled successfully`, gzip 225.26 kB).
-        - 백엔드 날짜 검증(`validate_workout_date`) KST 기준 유효 달력/미래 차단 직접 단위 테스트 100% 통과.
-        - 로컬 스토리지 사용자/날짜별 격리, 14일 updatedAt TTL 만료, UNKNOWN 상태 전이 격리 독립 시뮬레이션 100% 통과.
-     3. [미검증 유지] **통합/실서버 환경 미검증 항목**:
-        - 실제 PostgreSQL 운영 DB에 날짜별로 레코드가 인서트되는 통합 데이터 검증 (DB 변경/테스트 격리 준수를 위해 미실행).
+   * **검증 상태 구분 (정확한 범위 한정)**:
+     1. [UI 복원 확인] **사용자 브라우저 UI 육안 확인**: 기록 탭의 입력창 다크 테마와 날짜 피커 달력 아이콘이 정상적인 시인성으로 돌아온 것을 사용자가 브라우저에서 직접 확인하고 UI 회귀 수정을 승인함 (모든 세부 문구·개별 카드·비즈니스 기능을 항목별로 전체 승인한 것으로 확대 해석하지 않음).
+     2. [컴파일 및 독립 시뮬레이션 통과]:
+        - 프론트엔드 빌드(`npm run build`) 컴파일 성공 (에러 및 경고 0건, gzip 225.26 kB).
+        - 백엔드 날짜 검증 로직(`validate_workout_date`) KST 기준 유효 달력 및 미래 차단 파이썬 단위 테스트 통과.
+        - 파이썬 독립 시뮬레이션(`scratch/test_step_b.py`) 통과: 이는 파이썬 메모리 상에서 브라우저 스토리지 동작 및 상태 전이를 모사 검증한 것이며, 실제 브라우저 JS 런타임의 `draftStorage.js`나 React 상태 훅을 직접 구동한 통합 테스트가 아님.
+     3. [미검증 유지] **별도 확인하지 않은 항목**:
+        - 실제 PostgreSQL 운영 DB에 날짜별로 레코드가 인서트되는 통합 데이터 검증 (DB 변경 격리 준수를 위해 미실행).
         - 과거 날짜 기록 저장 시 텔레그램/Discord 실제 외부 웹훅 알림 발송 검증 (라이브 알림 미발송 준수를 위해 미실행).
         - 브라우저 실환경에서 며칠에 걸친 실제 날짜 전환 및 다중 탭 동시 입력 실시간 복원 검증.
    * **서버 멱등성 미구현 및 UNKNOWN 처리 한계 명시**:
      - 현재 DB 및 API에는 `client_set_id` 컬럼이나 고유 제약조건, 서버 Idempotency Key 메커니즘이 구현되어 있지 않으므로 **서버 측 멱등성은 미구현** 상태입니다.
      - 네트워크 타임아웃 등으로 응답을 수신하지 못했을 때 클라이언트는 해당 세트를 `UNKNOWN` 상태로 전환하여 '클라이언트 측의 무분별한 자동 재전송'만을 안전하게 억제합니다.
      - 따라서 실제 서버에 데이터가 도달했는지 여부는 클라이언트가 독자적으로 확정할 수 없으며, 사용자가 상단 '이 날짜에 저장된 기록' 조회를 통해 직접 중복 여부를 대조해야 하는 구조적 한계가 존재합니다.
-   * **현재 상태**: Step B 및 UI 회귀 수정 체크포인트 커밋 완료 대기.
+   * **체크포인트 커밋 완료**: `3fc661d` (`feature/phase1-ui-cleanup-and-graphs`, 2026-11-06).
+
+6. **Step C (통합 계정 스키마 및 마이그레이션) 진행 상태 및 로컬 테스트 결과**:
+   * **진행 원칙**: 운영 DB(Azure) 및 실제 인증 코드는 일체 변경하지 않고, 복원된 로컬 격리 테스트 DB에서만 시험 적용 및 결과 검증 완료.
+   * **사용자 PC 로컬 테스트 DB 시험 결과 (사용자 직접 실행 및 보고 내용)**:
+     - **대상**: `127.0.0.1:5433 / overloaderdb_stepc_restore_test` (PostgreSQL 18, user: postgres)
+     - **적용 후 검증 지표**:
+       - `social_accounts`: 4건 생성 확인
+       - `password_credentials`: 0건 확인
+       - `mismatch_count`: 0건 (기존 `users.id`와 Google 식별자 1:1 매핑 완전 일치)
+       - `users`: 4건 유지
+       - `workout_logs`: 2,365건 유지
+       - `cardio_logs`: 14건 유지
+       - `body_logs`: 10건 유지
+       - `meal_logs`: 24건 유지
+       - **검증 종료 코드**: `0`
+     - **사용자별 건수 분포**:
+       - `user_id 2`: 근력 1,837 / 유산소 14 / 바디 10 / 식단 24
+       - `user_id 13`: 근력 527 / 나머지 0
+       - `user_id 14`: 전체 0
+       - `user_id 16`: 근력 1 / 나머지 0
+     - **적용 전후 비교 상태 (과장 배제 및 정확화)**:
+       - 전체 테이블 행 수는 사전 기준선과 동일하게 유지됨.
+       - 단, 전체 행 수 일치만으로 행 내용의 수정이나 유실/중복이 전혀 없다고 증명된 것은 아니며, **'전체 건수 동일, 사용자별 사전 비교 및 행 내용 비교 미검증'**으로 정확히 분류.
+       - 제약조건 실제 정의 대조 완료 (사용자 직접 실행 및 보고): `pg_constraint` 실제 출력 확인 결과 핵심 제약 8개 및 NOT NULL 7개 포함 총 15개 행이 Step C 설계와 일치 확인 (종료 코드 0). 기존 17개 행 추정치는 폐기.
+       - 마이그레이션 적용 후 검증 스크립트 실행 성공(종료 코드 0)과 마이그레이션 DDL 스크립트 자체의 터미널 COMMIT 출력 로그 및 종료 코드 기록은 분리하여 관리.
+   * **검증 범위 한정 (확대 해석 엄격 금지)**:
+     - Step C 로컬 시험은 현재 확인 범위(DDL 생성 및 Google 계정 백필 스크립트의 로컬 실행)에서 완료로 정리.
+     - 실제 Google/Naver 로그인 인증 흐름, FastAPI 엔드포인트 연동, 운영 Azure DB 적용, 기존 행 내용 무변경은 일체 검증된 것이 아니며 '미검증' 상태를 유지.
+   * **운영 준비 절차 단순화 및 백업 원칙**:
+     - Windows 실행 환경: 인코딩 깨짐 방지를 위해 `$env:PGCLIENTENCODING = "UTF8"` 필수 적용.
+     - `created_at` 기준 조회는 제한적인 신규 생성 확인일 뿐이며, 기존 행의 수정(UPDATE)이나 삭제(DELETE) 등 전체 변경 감지가 아님을 명시.
+     - 운영 적용 직전 새 파일명(예: `overloaderdb_prod_pre_stepc_$(Get-Date -Format 'yyyyMMdd_HHmmss').dump`)으로 최신 pg_dump를 신규 생성하고 종료 코드, 파일 크기, 목차 읽기(`pg_restore --list`)를 확인하는 독립 절차 적용 (기존 검증된 백업 덮어쓰기 절대 금지).
+     - 운영 사전 점검 및 백필 대상 건수는 로컬의 4명 수치를 하드코딩하지 않고, 실행 시점의 실제 데이터(`SELECT count(*) FROM users WHERE google_id IS NOT NULL`)로 동적 판단.
+     - 운영 DDL 실행 시 `psql -X -v ON_ERROR_STOP=1` 및 단일 트랜잭션(`lock_timeout='3s'`, `statement_timeout='10s'`) 준수.
+
+7. **Step C (통합 계정 스키마 및 백필) 운영 Azure DB 적용 완료 (2026-11-06)**:
+   * **적용 방식 및 대상**:
+     - 사용자가 운영 PowerShell 스크립트(`scripts/run_step_c_prod_migration.ps1`)를 직접 실행하여 단계별 검증 후 적용 완료.
+     - 대상: `overloader.postgres.database.azure.com:5432 / overloaderdb` (PostgreSQL 18.6 on x86_64-pc-linux-gnu).
+   * **사전 백업 생성 및 검증 결과**:
+     - 프로젝트 외부 백업 경로(`C:\Users\Arthur\Documents\project\overloader_backups\db\`)에 신규 덤프 파일(`overloaderdb_prod_pre_stepc_*.dump`) 생성 확인.
+     - `pg_dump` 종료 코드 0, 파일 크기 정상(0바이트 아님), 목차 전체 읽기(`pg_restore --list`) 검증 통과 (기존 백업 덮어쓰기 없음).
+   * **사전 점검 및 DDL/백필 실행 결과 (사용자 제공 실행 로그 기준)**:
+     - 읽기 전용 사전 점검(`precheck_step_c.sql`) 이상 없이 통과.
+     - DDL 및 백필(`step_c_unified_auth.sql`): `INSERT 0 4`, `COMMIT`, 종료 코드 0으로 정상 완료.
+     - 기존 `users.google_id` 4건이 `social_accounts` 테이블의 `google` provider 레코드 4건으로 1:1 백필 완료.
+   * **사후 검증 결과 (`verify_post_migration.sql`)**:
+     - `users` 테이블 내 Google 계정 수: 4건.
+     - `social_accounts` 테이블 내 Google 계정 수: 4건.
+     - `password_credentials` 테이블 건수: 0건.
+     - `unmapped_users_count`: 0건 (누락 및 불일치 없음).
+     - 제약조건 실제 정의: `pg_constraint` 기준 15개 행(핵심 제약 8개 + NOT NULL 7개) 설계 일치 확인.
+     - 기존 주요 테이블 전체 건수 기준선 유지 확인: `users` 4, `workout_logs` 2,365, `cardio_logs` 14, `body_logs` 10, `meal_logs` 24.
+     - 사후 검증 `DO` 블록 예외 없이 통과.
+   * **중요: DB 상태와 Git 롤백 분리 고지**:
+     - 실제 운영 DB(`overloaderdb`)의 스키마 변경(`email_verified` 컬럼 추가, `password_credentials`, `social_accounts` 테이블 생성 및 백필)은 이미 영구 커밋 적용되었습니다.
+     - 따라서 향후 로컬 Git 브랜치에서 `git reset`이나 `git revert`를 수행하더라도 클라우드 DB는 롤백되지 않으며, DB 롤백이 필요할 경우 역방향 DDL 실행 또는 사전 생성된 외부 백업 덤프 복원을 통해서만 가능합니다.
+   * **검증 범위 및 한계 엄격 준수**:
+     - 본 작업은 **'운영 DB 스키마 생성 및 Google 계정 백필 완료'** 단계에 한정됩니다.
+     - 실제 사용자 로그인 기능(아이디/비밀번호, Google, Naver) 및 프론트엔드/백엔드 인증 코드 변경은 아직 진행되지 않았으므로(Step D 대상), 로그인 기능까지 검증 완료된 것으로 확대 해석하지 않습니다.
+     - 기존 서비스 안정성을 위해 `users.google_id` 컬럼은 그대로 유지되어 현재 프로덕션 인증 흐름에 영향을 주지 않습니다.
+
 
