@@ -22,6 +22,7 @@ export default function AppShell({
   currentTab,
   onTabChange,
   userName,
+  accountLabel = "소셜 계정",
   onLogout,
   children
 }) {
@@ -164,7 +165,7 @@ export default function AppShell({
                 >
                   {userName || "사용자"}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--sub)" }}>Google 계정</div>
+                <div style={{ fontSize: 11, color: "var(--sub)" }}>{accountLabel || "소셜 계정"}</div>
               </div>
             </div>
 

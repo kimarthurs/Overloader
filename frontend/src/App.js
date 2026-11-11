@@ -103,6 +103,7 @@ export default function App() {
         currentTab={tab}
         onTabChange={setTab}
         userName={user.name}
+        accountLabel={user?.username ? `@${user.username}` : "소셜 계정"}
         onLogout={handleLogout}
       >
         {tab === "home" && (

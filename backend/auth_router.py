@@ -22,6 +22,8 @@ from contextlib import contextmanager
 from typing import Optional, Dict, Any, List
 
 import httpx
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
@@ -968,10 +970,25 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
             return RedirectResponse(url=mock_url)
 
         if provider == "google":
-            # 실제 Google OAuth 인가코드 플로우는 현재 연동 준비 중(pending) 상태입니다.
-            # 모의(mock)로 조용히 fallback하지 않고, 프론트엔드에 대기 상태를 명확히 안내합니다.
-            delimiter = "&" if "?" in target_redirect else "?"
-            return RedirectResponse(url=f"{target_redirect}{delimiter}error=google_oauth_pending")
+            client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+            if not client_id:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="GOOGLE_CLIENT_ID 환경변수가 설정되지 않았습니다."
+                )
+            google_callback = os.getenv("GOOGLE_CALLBACK_URL", "http://127.0.0.1:8000/auth/v2/oauth/google/callback").strip()
+            expected_nonce = hash_token_or_code(f"google_nonce:{state_secret}")[:32]
+            auth_params = {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": google_callback,
+                "scope": "openid email profile",
+                "state": state_secret,
+                "nonce": expected_nonce,
+                "prompt": "select_account",
+            }
+            auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(auth_params)}"
+            return RedirectResponse(url=auth_url)
         elif provider == "naver":
             client_id = os.getenv("NAVER_CLIENT_ID", "").strip()
             if not client_id:
@@ -1118,6 +1135,10 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                         conn.rollback()
                         return RedirectResponse(url=f"{target_redirect}?error=state_expired")
 
+                    if st_provider and st_provider != provider:
+                        conn.rollback()
+                        return RedirectResponse(url=f"{target_redirect}?error=provider_mismatch")
+
                     cur.execute("UPDATE auth_single_use_tokens SET consumed_at = now() WHERE id = %s", (_id,))
 
                     is_mock_flow = allow_mock and (mock_code is not None or mock_uid is not None)
@@ -1184,9 +1205,102 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                                     prov_email = (account_data.get("email") or "").strip() or None
                                     raw_name = account_data.get("nickname") or account_data.get("name") or "네이버 사용자"
                                     prov_name = str(raw_name).strip()[:50]
+                            except httpx.TimeoutException:
+                                conn.rollback()
+                                return RedirectResponse(url=f"{target_redirect}?error=naver_timeout")
                             except Exception as e:
                                 conn.rollback()
                                 return RedirectResponse(url=f"{target_redirect}?error=naver_communication_error")
+                        elif provider == "google":
+                            if not code:
+                                conn.rollback()
+                                return RedirectResponse(url=f"{target_redirect}?error=missing_auth_code")
+
+                            client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+                            client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+                            if not client_id or not client_secret:
+                                conn.rollback()
+                                return RedirectResponse(url=f"{target_redirect}?error=google_credentials_not_configured")
+
+                            google_callback = os.getenv("GOOGLE_CALLBACK_URL", "http://127.0.0.1:8000/auth/v2/oauth/google/callback").strip()
+                            token_url = "https://oauth2.googleapis.com/token"
+                            token_data = {
+                                "code": code,
+                                "client_id": client_id,
+                                "client_secret": client_secret,
+                                "redirect_uri": google_callback,
+                                "grant_type": "authorization_code",
+                            }
+
+                            try:
+                                async with httpx.AsyncClient(timeout=10.0) as http_client:
+                                    token_res = await http_client.post(token_url, data=token_data)
+                                    if token_res.status_code != 200:
+                                        conn.rollback()
+                                        return RedirectResponse(url=f"{target_redirect}?error=google_token_request_failed")
+
+                                    token_json = token_res.json()
+                                    raw_id_token = token_json.get("id_token")
+                                    google_access_token = token_json.get("access_token")
+                                    if not raw_id_token:
+                                        conn.rollback()
+                                        return RedirectResponse(url=f"{target_redirect}?error=google_id_token_missing")
+
+                                    # 1. ID Token Verification using official google-auth library
+                                    try:
+                                        idinfo = google_id_token.verify_oauth2_token(
+                                            raw_id_token,
+                                            google_requests.Request(),
+                                            audience=client_id,
+                                        )
+                                    except Exception:
+                                        conn.rollback()
+                                        return RedirectResponse(url=f"{target_redirect}?error=invalid_id_token")
+
+                                    # Verify issuer
+                                    if idinfo.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+                                        conn.rollback()
+                                        return RedirectResponse(url=f"{target_redirect}?error=invalid_id_token_issuer")
+
+                                    # Verify nonce if present in ID token
+                                    expected_nonce = hash_token_or_code(f"google_nonce:{state}")[:32]
+                                    token_nonce = idinfo.get("nonce")
+                                    if token_nonce and token_nonce != expected_nonce:
+                                        conn.rollback()
+                                        return RedirectResponse(url=f"{target_redirect}?error=nonce_mismatch")
+
+                                    id_sub = idinfo.get("sub")
+                                    if not id_sub:
+                                        conn.rollback()
+                                        return RedirectResponse(url=f"{target_redirect}?error=google_sub_missing")
+
+                                    # 2. OIDC UserInfo endpoint verification
+                                    if google_access_token:
+                                        userinfo_url = "https://openidconnect.googleapis.com/v1/userinfo"
+                                        userinfo_res = await http_client.get(
+                                            userinfo_url,
+                                            headers={"Authorization": f"Bearer {google_access_token}"}
+                                        )
+                                        if userinfo_res.status_code == 200:
+                                            userinfo_json = userinfo_res.json()
+                                            userinfo_sub = userinfo_json.get("sub")
+                                            if userinfo_sub and userinfo_sub != id_sub:
+                                                conn.rollback()
+                                                return RedirectResponse(url=f"{target_redirect}?error=sub_mismatch")
+                                        else:
+                                            conn.rollback()
+                                            return RedirectResponse(url=f"{target_redirect}?error=google_userinfo_request_failed")
+
+                                    prov_uid = str(id_sub).strip()
+                                    prov_email = (idinfo.get("email") or "").strip() or None
+                                    raw_name = idinfo.get("name") or "구글 사용자"
+                                    prov_name = str(raw_name).strip()[:50]
+                            except httpx.TimeoutException:
+                                conn.rollback()
+                                return RedirectResponse(url=f"{target_redirect}?error=google_timeout")
+                            except Exception as e:
+                                conn.rollback()
+                                return RedirectResponse(url=f"{target_redirect}?error=google_communication_error")
                         else:
                             conn.rollback()
                             return RedirectResponse(url=f"{target_redirect}?error=unsupported_provider")

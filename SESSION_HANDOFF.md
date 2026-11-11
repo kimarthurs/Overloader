@@ -420,3 +420,45 @@ un_step_d_local_tests.ps1 -TestOnly)와, 이번 단위/통합 테스트에서 �
          - 향후 Step D 백엔드 코드를 운영에 배포하기 전에 추가 스키마 점검, 환경변수 설정, 전환 절차를 사전 승인받은 뒤 단계별로 진행해야 함.
       3. **프론트엔드 환경변수 및 빌드**:
          - 로컬 개발 환경 기본 API 주소(http://127.0.0.1:8000)와 프로덕션 빌드 환경변수(https://api.overloader.cloud)의 분리 상태를 배포 전 재확인할 것.
+
+13. **네이버 로그인 회귀 검증 및 홈페이지 로그인 수단 표시 불일치 해결 (2026-11-11)**:
+    * **회귀 결과 및 사용자 브라우저 확인 완료**:
+      - 사용자 브라우저 직접 확인: 실제 네이버 로그인 후 메인 대시보드 정상 표시, 세션 만료 경고 미발생 정상 동작 확인.
+      - 발견된 문제: 메인 대시보드 사이드바에 로그인 수단이 "Google 계정"으로 오표시됨.
+      - 최소 수정 적용 후 사용자 브라우저 직접 확인: 사이드바에 중립적 사실 기반 문구인 **"소셜 계정"**으로 정상 표시되는 것까지 브라우저 확인 완료.
+    * **원인 추적 (Root Cause)**:
+      - `frontend/src/components/layout/AppShell.jsx`의 데스크톱 좌측 사이드바 계정 카드에 `<div style={{ fontSize: 11, color: "var(--sub)" }}>Google 계정</div>` 문구가 리디자인 당시부터 고정 문자열(하드코딩)로 작성되어 있었음.
+      - 설정 화면(`AccountManagementCard.jsx`)은 `/auth/v2/account/methods` API를 통해 실제 연동된 `social_accounts`를 동적으로 조회하므로 "소셜 로그인 전용 계정", "네이버 계정 연동됨(이메일 표시)"으로 정확히 표시되었으나, 홈 화면 사이드바는 하드코딩된 문구로 인해 불일치 발생.
+      - 세션 JWT나 `localStorage`에는 로그인 당시의 프로바이더 정보가 포함되지 않으며, 사용자 식별자나 이메일로 프로바이더를 추정하는 코드는 존재하지 않음.
+    * **최소 수정 내용**:
+      - `AppShell.jsx`: 고정 "Google 계정"을 `accountLabel || "소셜 계정"`으로 교체 (중립적 사실 기반 문구 적용).
+      - `App.js`: `AppShell`에 `accountLabel={user?.username ? `@${user.username}` : "소셜 계정"}` 전달.
+    * **검증 현황**:
+      - 단위/통합 테스트: 실행된 66건 통과, 8건 미실행 (`pytest`).
+      - 프론트엔드 프로덕션 빌드: `npm run build` 성공 (`Compiled successfully`).
+    * **미완료 및 제약 준수**:
+      - 운영 Azure DB 미접속 및 변경 없음, 계정 연동 해제 미실행, Google OAuth 신규 구현/원격 push/배포 미실행.
+
+14. **Google 실제 OAuth 인가코드 플로우 로컬 백엔드 구현 및 브라우저 검증 완료 (2026-11-11)**:
+    * **사용자 브라우저 직접 확인 완료**:
+      - 실제 Google 로그인 후 앱에 정상 진입하며 사이드바에 "소셜 계정"으로 정상 표시되는 것을 브라우저에서 직접 확인 완료.
+      - 앞서 확인된 Naver 로그인 후 메인 정상 표시 및 로그인 만료 경고 없음 사실 유지.
+      - ※ API별 200 응답은 사용자 확인으로 추정하지 않으며, 백엔드 로컬 터미널 로그로 관찰된 인가 엔드포인트(/auth/v2/oauth/google/authorize) 및 콜백(/auth/v2/oauth/google/callback) 진입 사실만 명시함.
+    * **구현 내용**:
+      - `backend/auth_router.py`: Google 인가 URL 생성(OIDC `openid email profile`, `prompt=select_account`, `nonce` 생성 포함) 및 콜백 수신 엔드포인트 구현.
+      - OIDC 표준 검증: `google.oauth2.id_token.verify_oauth2_token`을 활용한 서명/발급자/대상(aud)/만료(exp) 검증, `nonce` 대조, OIDC UserInfo 엔드포인트(`https://openidconnect.googleapis.com/v1/userinfo`) `sub` 일치 검증 적용.
+      - 식별자 및 계정 격리: Google의 `sub`를 `provider_user_id`로 사용하여 `social_accounts` 테이블에서 1:1 매핑 유지. 동일 이메일 타 제공자 계정과의 자동 병합 차단.
+      - 보안 처리: 상태(`state`) 1회성 소진 및 만료 검증, 교차 제공자 state 주입 차단(`provider_mismatch`), Google 통신 타임아웃(10초) 및 오류 시 트랜잭션 롤백 보장.
+    * **검증 현황 (3개 검증 유형 엄격 구분)**:
+      1. **모의 단위/통합 테스트**: **74 passed, 8 skipped, 0 failed (100% 통과)** (`pytest`).
+         - 추가된 8개 Google 단위 테스트: 인가 URL 파라미터 검증, 기존 Google 매핑 유지 검증(동일 users.id 유지 확인), 신규 Google 계정 분리, state 거부 시나리오(누락/만료/재사용/제공자 불일치), ID 토큰 검증 실패 거부, UserInfo sub 불일치 거부, 동의 거절 및 외부 통신 오류 처리, link 충돌 및 reauth 불일치 거부.
+      2. **사용자 수동 브라우저 확인**:
+         - 네이버 실제 로그인: 메인 대시보드 정상 진입, 세션 만료 경고 미발생 확인 완료.
+         - Google 실제 로그인: 앱 정상 진입, 사이드바 "소셜 계정" 정상 표시 확인 완료.
+      3. **실제 DB 테스트**:
+         - 로컬 사용자 격리 DB(`127.0.0.1:5433 / overloaderdb_stepd_test`)에서 실행 확인된 사항이며, 운영 Azure DB에 대한 검증이 아님을 명시.
+    * **미완료 및 제약 준수**:
+      - 계정 관리 UI 수동 기능 검증(비밀번호 등록/변경, 소셜 연동/해제) 미실행 상태 유지.
+      - 운영 Azure DB 미접속 및 스키마 변경 없음.
+      - 레거시 인증 경로(`/auth/google`) 보존 유지.
+      - 원격 push / merge / 배포 미실행.
