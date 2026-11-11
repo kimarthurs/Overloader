@@ -14,7 +14,7 @@ export function getAuthSessionId() {
   return authSessionId;
 }
 
-export function initAuthSession(token, name) {
+export function initAuthSession(token, name, username) {
   authSessionId++;
   currentAbortController = new AbortController();
   if (token) {
@@ -24,11 +24,19 @@ export function initAuthSession(token, name) {
   if (name) {
     localStorage.setItem("userName", name);
   }
+  if (username !== undefined) {
+    if (username) {
+      localStorage.setItem("userUsername", username);
+    } else {
+      localStorage.removeItem("userUsername");
+    }
+  }
 }
 
 export function clearAuthStorage() {
   localStorage.removeItem("token");
   localStorage.removeItem("userName");
+  localStorage.removeItem("userUsername");
   delete axios.defaults.headers.common["Authorization"];
 }
 

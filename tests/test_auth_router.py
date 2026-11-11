@@ -8,6 +8,7 @@ Tests:
 """
 
 import pytest
+from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -1122,4 +1123,348 @@ class TestGoogleOAuthFlows:
                         res = client2.get("/auth/v2/oauth/google/callback?state=dummy_state&code=code", follow_redirects=False)
                         assert res.status_code in (302, 307)
                         assert "error=reauth_user_mismatch" in res.headers["location"]
+
+
+class TestAuthenticatedOAuthUrlEndpoint:
+    def test_authorize_url_unauthenticated_rejected(self):
+        fake_conn = FakeConnection()
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        res = client.post("/auth/v2/oauth/naver/authorize-url", json={
+            "purpose": "link",
+            "redirect_uri": "http://127.0.0.1:3000?tab=settings"
+        })
+        assert res.status_code == 401
+        assert "Authorization header" in res.json()["detail"]
+
+    def test_authorize_url_authenticated_link_success_no_jwt_in_url(self):
+        token = create_access_token(user_id=42, token_version=1)
+
+        class UserCursor(FakeCursor):
+            def fetchone(self):
+                # SELECT id, name, token_version FROM users
+                return (42, "Arthur", 1)
+
+        fake_conn = FakeConnection(UserCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "false",
+            "ENV": "development",
+            "NAVER_CLIENT_ID": "mock_naver_id",
+            "NAVER_CALLBACK_URL": "http://127.0.0.1:8000/auth/v2/oauth/naver/callback"
+        }, clear=False):
+            res = client.post(
+                "/auth/v2/oauth/naver/authorize-url",
+                json={
+                    "purpose": "link",
+                    "redirect_uri": "http://127.0.0.1:3000?tab=settings"
+                },
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert "authorization_url" in data
+            auth_url = data["authorization_url"]
+            assert auth_url.startswith("https://nid.naver.com/oauth2.0/authorize?")
+            assert "client_id=mock_naver_id" in auth_url
+            # Strict safety: JWT is NEVER exposed in the URL!
+            assert token not in auth_url
+            assert "auth_token" not in auth_url
+
+            # State was stored in DB bound to user_id 42
+            executed = fake_conn.cursor_obj.executed_queries
+            state_inserts = [p for q, p in executed if "INSERT INTO auth_single_use_tokens" in q]
+            assert len(state_inserts) == 1
+            assert state_inserts[0][1] == 42  # user_id
+            assert state_inserts[0][3] == "link"  # purpose
+            assert state_inserts[0][4] == "naver"  # target_provider
+
+    def test_authorize_url_reauth_unlinked_provider_rejected(self):
+        token = create_access_token(user_id=42, token_version=1)
+
+        class UnlinkedCursor(FakeCursor):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def fetchone(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return (42, "Arthur", 1)  # user verification
+                elif self.calls == 2:
+                    return None  # No Google account linked!
+                return None
+
+        fake_conn = FakeConnection(UnlinkedCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        res = client.post(
+            "/auth/v2/oauth/google/authorize-url",
+            json={
+                "purpose": "reauth",
+                "target_purpose": "password_add",
+                "redirect_uri": "http://127.0.0.1:3000?tab=settings"
+            },
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        assert res.status_code == 400
+        assert "소셜 연동이 존재하지 않아" in res.json()["detail"]
+
+    def test_authorize_url_reauth_linked_provider_success(self):
+        token = create_access_token(user_id=42, token_version=1)
+
+        class LinkedCursor(FakeCursor):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def fetchone(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return (42, "Arthur", 1)  # user verification
+                elif self.calls == 2:
+                    return (1,)  # Naver is linked!
+                return None
+
+        fake_conn = FakeConnection(LinkedCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "false",
+            "ENV": "development",
+            "NAVER_CLIENT_ID": "mock_naver_id",
+            "NAVER_CALLBACK_URL": "http://127.0.0.1:8000/auth/v2/oauth/naver/callback"
+        }, clear=False):
+            res = client.post(
+                "/auth/v2/oauth/naver/authorize-url",
+                json={
+                    "purpose": "reauth",
+                    "target_purpose": "password_add",
+                    "redirect_uri": "http://127.0.0.1:3000?tab=settings"
+                },
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data["provider"] == "naver"
+            assert data["purpose"] == "reauth"
+            assert data["authorization_url"].startswith("https://nid.naver.com/")
+            assert "auth_type=reauthenticate" in data["authorization_url"]
+
+            # Verify that full purpose 'reauth:password_add' is stored in auth_single_use_tokens
+            executed = fake_conn.cursor_obj.executed_queries
+            state_inserts = [p for q, p in executed if "INSERT INTO auth_single_use_tokens" in q]
+            assert len(state_inserts) == 1
+            assert state_inserts[0][1] == 42  # user_id
+            assert state_inserts[0][3] == "reauth:password_add"  # purpose
+            assert state_inserts[0][4] == "naver"  # target_provider
+
+    def test_oauth_callback_reauth_preserves_tab_settings_and_password_add_purpose(self):
+        from urllib.parse import urlparse, parse_qs
+        from backend.auth_utils import hash_token_or_code, decode_and_validate_reauth_ticket
+
+        state_secret = "test_state_secret_value"
+        token_hash = hash_token_or_code(state_secret)
+
+        class CallbackCursor(FakeCursor):
+            def __init__(self):
+                super().__init__()
+                self.step = 0
+
+            def fetchone(self):
+                self.step += 1
+                if self.step == 1:
+                    # SELECT id, user_id, session_id, purpose, target_provider, consumed_at, expires_at
+                    # FROM auth_single_use_tokens WHERE token_hash = ...
+                    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    return (101, 42, "sess_12345", "reauth:password_add", "naver", None, expires_at)
+                elif self.step == 2:
+                    # SELECT 1 FROM social_accounts WHERE user_id = 42 AND provider = 'naver' AND provider_user_id = 'mock_naver_uid'
+                    return (1,)
+                elif self.step == 3:
+                    # SELECT token_version FROM users WHERE id = 42
+                    return (1,)
+                return None
+
+        fake_conn = FakeConnection(CallbackCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "true",
+            "ENV": "development",
+        }, clear=False):
+            # Callback arrives from OAuth without redirect_uri (standard external OAuth callback)
+            res = client.get(
+                f"/auth/v2/oauth/naver/callback?state={state_secret}&mock_uid=mock_naver_uid&mock_code=mcode123",
+                follow_redirects=False
+            )
+            assert res.status_code == 307
+            redirect_target = res.headers["location"]
+            parsed = urlparse(redirect_target)
+            qs = parse_qs(parsed.query)
+
+            # 1. Base URL must include tab=settings
+            assert qs.get("tab") == ["settings"]
+            # 2. Purpose must accurately be password_add (not fallen back to password_reset)
+            assert qs.get("purpose") == ["password_add"]
+            # 3. Ticket must be present and valid for password_add
+            ticket = qs.get("ticket")[0]
+            assert ticket is not None
+            claims = decode_and_validate_reauth_ticket(
+                ticket=ticket,
+                expected_user_id=42,
+                expected_purpose="password_add",
+                expected_session_id="sess_12345",
+                expected_token_version=1
+            )
+            assert claims["purpose"] == "password_add"
+            assert claims["user_id"] == 42
+
+    def test_consistent_profile_across_password_login_oauth_exchange_and_get_me(self):
+        """
+        Regression test: Enforces that for the identical user_id (e.g. 42),
+        password login, OAuth exchange code, and GET /me all return identical
+        common nickname (name) and username structures.
+        """
+        valid_pwd = "MySecretPassword123!"
+        hashed = hash_password(valid_pwd)
+
+        class MultiAuthCursor(FakeCursor):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def fetchone(self):
+                self.calls += 1
+                # When password login queries credentials + user:
+                # SELECT p.user_id, p.password_hash, u.name, COALESCE(u.token_version, 1)
+                if self.calls == 1:
+                    return (42, hashed, "Arthur", 1)
+                # When oauth exchange queries token:
+                elif self.calls == 2:
+                    exp = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    return (201, 42, "sess_oauth", None, exp)
+                # When oauth exchange queries user:
+                elif self.calls == 3:
+                    return (42, "Arthur", 1)
+                # When oauth exchange queries password_credentials username:
+                elif self.calls == 4:
+                    return ("arthur",)
+                # When get_me validates user in dependency:
+                elif self.calls == 5:
+                    return (42, "Arthur", 1)
+                # When get_me queries username:
+                elif self.calls == 6:
+                    return ("arthur",)
+                return None
+
+        fake_conn = FakeConnection(MultiAuthCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        # 1. Password Login
+        login_res = client.post("/auth/v2/login", json={
+            "username": "arthur",
+            "password": valid_pwd
+        })
+        assert login_res.status_code == 200
+        login_data = login_res.json()
+        assert login_data["name"] == "Arthur"
+        assert login_data["username"] == "arthur"
+        assert login_data["user"]["name"] == "Arthur"
+        assert login_data["user"]["username"] == "arthur"
+        assert login_data["user"]["id"] == 42
+
+        # 2. OAuth Exchange (e.g. Naver or Google)
+        oauth_res = client.post("/auth/v2/oauth/exchange", json={
+            "exchange_code": "oauth_code_xyz",
+            "session_id": "sess_oauth"
+        })
+        assert oauth_res.status_code == 200
+        oauth_data = oauth_res.json()
+        assert oauth_data["name"] == "Arthur"
+        assert oauth_data["username"] == "arthur"
+        assert oauth_data["user"]["name"] == "Arthur"
+        assert oauth_data["user"]["username"] == "arthur"
+        assert oauth_data["user"]["id"] == 42
+
+        # 3. GET /me
+        token = oauth_data["token"]
+        me_res = client.get("/auth/v2/me", headers={"Authorization": f"Bearer {token}"})
+        assert me_res.status_code == 200
+        me_data = me_res.json()
+        assert me_data["name"] == "Arthur"
+        assert me_data["username"] == "arthur"
+        assert me_data["id"] == 42
+
+        # Enforce exact identity match
+        assert login_data["name"] == oauth_data["name"] == me_data["name"]
+        assert login_data["username"] == oauth_data["username"] == me_data["username"]
+        assert login_data["user"]["id"] == oauth_data["user"]["id"] == me_data["id"]
+
+    def test_oauth_login_retains_existing_nickname_when_social_name_differs(self):
+        """
+        Regression test: When an existing user logs in with an external social account
+        that reports an updated or different profile name (e.g. 'Naver Different Name'),
+        the app common nickname (users.name) must NOT be overwritten.
+        """
+        state_secret = "test_state_secret_existing_user"
+
+        class RetentionCursor(FakeCursor):
+            def __init__(self):
+                super().__init__()
+                self.step = 0
+
+            def fetchone(self):
+                self.step += 1
+                if self.step == 1:
+                    # SELECT id, user_id, session_id, purpose, target_provider, consumed_at, expires_at
+                    exp = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    return (105, None, "sess_login", "login", "naver", None, exp)
+                elif self.step == 2:
+                    # SELECT user_id FROM social_accounts WHERE provider = 'naver' AND provider_user_id = 'uid_99'
+                    return (42,)
+                return None
+
+        fake_conn = FakeConnection(RetentionCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "true",
+            "ENV": "development",
+        }, clear=False):
+            # Naver returns mock_name = "New External Name"
+            res = client.get(
+                f"/auth/v2/oauth/naver/callback?state={state_secret}&mock_uid=uid_99&mock_name=New+External+Name",
+                follow_redirects=False
+            )
+            assert res.status_code == 307
+
+            # Enforce that no 'UPDATE users SET name' query was executed!
+            executed = fake_conn.cursor_obj.executed_queries
+            update_name_queries = [q for q, _ in executed if "UPDATE users SET" in q and "name" in q]
+            assert len(update_name_queries) == 0
+
+
 

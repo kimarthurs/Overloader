@@ -46,8 +46,33 @@ function useTheme() {
 // ── 메인 앱 ──
 export default function App() {
   const { theme, toggle: toggleTheme } = useTheme();
-  const [user, setUser] = useState(null);
-  const [tab, setTab] = useState("home");
+  const [user, setUser] = useState(() => {
+    try {
+      const token = localStorage.getItem("token");
+      const name = localStorage.getItem("userName");
+      const username = localStorage.getItem("userUsername");
+      if (token) {
+        initAuthSession(token, name, username);
+        return { token, name: name || "", username: username || null };
+      }
+    } catch (e) {}
+    return null;
+  });
+  const [tab, setTab] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      const purposeParam = params.get("purpose");
+      const ticketParam = params.get("ticket");
+      const statusParam = params.get("status");
+      if (tabParam === "settings" || purposeParam === "password_add" || (ticketParam && purposeParam !== "password_reset") || statusParam === "link_success") {
+        return "settings";
+      }
+      return tabParam || "home";
+    } catch (e) {
+      return "home";
+    }
+  });
   const [showLastWorkout, setShowLastWorkout] = useState(true);
   const clearAppState = useCallback(() => {
     setUser(null);
@@ -59,19 +84,60 @@ export default function App() {
     registerLogoutCallback(clearAppState);
   }, [clearAppState]);
 
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    const name = localStorage.getItem("userName");
-    if (token) {
-      initAuthSession(token, name);
-      setUser({ token, name });
+  const applyAuthUser = useCallback((data) => {
+    if (!data) return;
+    const currentToken = localStorage.getItem("token");
+    const u = data.user || data;
+    const token = data.token || currentToken;
+    if (currentToken && token && currentToken !== token) return;
+
+    const name = u.name !== undefined ? u.name : data.name;
+    const username = u.username !== undefined ? u.username : data.username;
+    const id = u.id || u.user_id || data.id || data.user_id;
+    const token_version = u.token_version || data.token_version;
+
+    if (data.token) {
+      initAuthSession(token, name, username);
+    } else {
+      if (name) localStorage.setItem("userName", name);
+      if (username) localStorage.setItem("userUsername", username);
+      else if (username === null) localStorage.removeItem("userUsername");
     }
+    setUser(prev => ({
+      ...prev,
+      token,
+      id,
+      name: name || "",
+      username: username || null,
+      token_version,
+    }));
   }, []);
+
+  const syncProfile = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      const res = await axios.get(`${API}/auth/v2/me`);
+      if (localStorage.getItem("token") !== token) return;
+      if (res.data) {
+        applyAuthUser(res.data);
+      }
+    } catch (err) {
+      // 401 is handled by auth interceptor
+    }
+  }, [applyAuthUser]);
+
+  useEffect(() => {
+    if (user?.token) {
+      syncProfile();
+    }
+  }, [user?.token, syncProfile]);
 
   useEffect(() => {
     if (!user) return;
     axios.get(`${API}/settings`)
       .then(res => {
+        if (!localStorage.getItem("token")) return;
         if (res.data && typeof res.data.show_last_workout === "boolean") {
           setShowLastWorkout(res.data.show_last_workout);
         }
@@ -84,9 +150,8 @@ export default function App() {
   }, []);
 
   const handleLogin = useCallback((data) => {
-    initAuthSession(data.token, data.name);
-    setUser(data);
-  }, []);
+    applyAuthUser(data);
+  }, [applyAuthUser]);
 
 
   if (!user) {
@@ -103,7 +168,7 @@ export default function App() {
         currentTab={tab}
         onTabChange={setTab}
         userName={user.name}
-        accountLabel={user?.username ? `@${user.username}` : "소셜 계정"}
+        accountLabel={user?.username ? `@${user.username}` : "Overloader 계정"}
         onLogout={handleLogout}
       >
         {tab === "home" && (
@@ -138,6 +203,7 @@ export default function App() {
             userName={user.name}
             showLastWorkout={showLastWorkout}
             onToggleShowLastWorkout={setShowLastWorkout}
+            onProfileUpdate={syncProfile}
           />
         )}
       </AppShell>

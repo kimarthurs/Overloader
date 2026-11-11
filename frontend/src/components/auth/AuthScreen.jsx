@@ -60,7 +60,7 @@ export default function AuthScreen({ onLogin }) {
       .then(res => {
         // 교환 성공: URL에서 쿼리스트링 제거
         window.history.replaceState({}, document.title, window.location.pathname);
-        initAuthSession(res.data.token, res.data.name);
+        initAuthSession(res.data.token, res.data.name, res.data.username);
         onLogin(res.data);
       })
       .catch(err => {
@@ -199,7 +199,7 @@ export default function AuthScreen({ onLogin }) {
         username: normUsername,
         password: password
       });
-      initAuthSession(res.data.token, res.data.name);
+      initAuthSession(res.data.token, res.data.name, res.data.username);
       onLogin(res.data);
     } catch (err) {
       const detail = err.response?.data?.detail;
@@ -249,7 +249,7 @@ export default function AuthScreen({ onLogin }) {
         name: trimName,
         email: trimEmail || null,
       });
-      initAuthSession(res.data.token, res.data.name);
+      initAuthSession(res.data.token, res.data.name, res.data.username);
       onLogin(res.data);
     } catch (err) {
       const detail = err.response?.data?.detail;
@@ -293,7 +293,7 @@ export default function AuthScreen({ onLogin }) {
       const res = await axios.post(`${API}/auth/v2/account/password/reset`, payload);
       setSuccessMsg("비밀번호가 성공적으로 재설정되었습니다. 로그인 세션으로 이동합니다.");
       setTimeout(() => {
-        initAuthSession(res.data.token, res.data.name || name || "사용자");
+        initAuthSession(res.data.token, res.data.name || name, res.data.username);
         onLogin(res.data);
       }, 800);
     } catch (err) {

@@ -93,7 +93,8 @@ export default function SettingsScreen({
   onLogout,
   userName,
   showLastWorkout,
-  onToggleShowLastWorkout
+  onToggleShowLastWorkout,
+  onProfileUpdate
 }) {
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -266,7 +267,7 @@ export default function SettingsScreen({
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {/* 1. 계정 및 로그인 수단 관리 카드 */}
-          <AccountManagementCard userName={userName} onLogout={onLogout} />
+          <AccountManagementCard userName={userName} onLogout={onLogout} onProfileUpdate={onProfileUpdate} />
 
           {/* 2. 화면 테마 (다크/라이트 모드) */}
           <div style={S.card}>

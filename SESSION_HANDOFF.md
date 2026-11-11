@@ -462,3 +462,77 @@ un_step_d_local_tests.ps1 -TestOnly)와, 이번 단위/통합 테스트에서 �
       - 운영 Azure DB 미접속 및 스키마 변경 없음.
       - 레거시 인증 경로(`/auth/google`) 보존 유지.
       - 원격 push / merge / 배포 미실행.
+
+15. **소셜 본인 인증 및 계정 연동 인가 URL 안전 시작 구조 개선 (2026-11-11)**:
+    * **오류 원인 (Root Cause)**:
+      - `AccountManagementCard.jsx`에서 `window.location.href = /auth/v2/oauth/{provider}/authorize?...`로 브라우저 상단 페이지를 직접 이동시킴.
+      - 브라우저 직접 페이지 이동 시에는 Axios의 `Authorization: Bearer <token>` 헤더가 전송되지 않아 백엔드가 `401 Unauthorized ("재인증을 위해 로그인이 필요합니다.")`를 반환함.
+      - 또한 URL 쿼리 파라미터에 JWT를 노출하는 것은 브라우저 히스토리, 서버 접근 로그, Referer 헤더에 토큰이 누출되는 보안 안티패턴임.
+    * **안전한 구조 개선**:
+      1. **백엔드**: `POST /auth/v2/oauth/{provider}/authorize-url` 엔드포인트 신설.
+         - `Authorization: Bearer <token>` 헤더로 `current_user` 검증 (`Depends(get_current_user_v2)`).
+         - 사용자 ID, 세션 ID, 목적(`reauth`/`link`), 타겟 작업(`password_add` 등)을 DB `auth_single_use_tokens`의 `state`에 안전하게 바인딩.
+         - 검증된 공식 제공자 인가 URL(`https://nid.naver.com/...` 또는 `https://accounts.google.com/...`)을 JSON으로 반환. URL 내 JWT 노출 전면 제거.
+      2. **프론트엔드**:
+         - Bearer 헤더를 포함한 Axios 요청으로 `authorize-url`을 호출하고 반환된 인가 URL 호스트를 검증한 후 브라우저 이동.
+         - 안전한 2단계 비밀번호 등록 흐름:
+           - 1단계: 소셜 본인 인증 전에는 비밀번호를 입력받지 않고 `[소셜 본인 인증 시작]` 버튼으로 인증 유도. (페이지 이동 중 비밀번호 유실 및 스토리지 보관 위험 원천 차단).
+           - 2단계: 소셜 인증 복귀 후 발급된 `ticket`(`purpose=password_add`)을 감지하여 모달을 띄우고, 사용자가 아이디/비밀번호 입력 후 `POST /auth/v2/account/password/add`로 원자적 티켓 소비 및 등록 완료.
+      3. **쿼리 파라미터 구분자 정리**:
+         - 콜백 리다이렉트 시 `target_redirect` 내 쿼리 파라미터(`?tab=settings`) 존재 여부에 따라 `&`와 `?`를 안전하게 자동 분기 처리.
+    * **검증 현황**:
+      - 단위/통합 테스트: **78 passed, 8 skipped, 0 failed (100% 통과)** (`pytest`).
+      - 프론트엔드 빌드: `npm run build` 성공 (`Compiled successfully`).
+
+16. **네이버 재인증 규격 반영 및 OAuth 콜백 복귀 시 설정 탭/티켓 보존 개선 (2026-11-11)**:
+    * **오류 원인 (Root Cause)**:
+      1. **네이버 재인증 파라미터 누락**: `purpose=reauth` 시 네이버 공식 재인증 파라미터인 `auth_type=reauthenticate`가 인가 URL에 누락되어 네이버 계정 비밀번호 재확인 절차가 생략됨.
+      2. **목적 및 리다이렉트 유실**: 외부 OAuth 제공자(Naver)는 인가 후 서버 콜백 엔드포인트 호출 시 원본 프론트엔드 쿼리나 `target_purpose`를 전달하지 않음. DB state에 `target_purpose`가 저장되지 않아 콜백 처리 시 `reauth_purpose`가 `password_reset`으로 폴백되고, 리다이렉트 대상이 `http://127.0.0.1:3000`(루트)으로 폴백됨.
+      3. **프론트엔드 URL 정리 타이밍 간섭**: 백엔드가 `purpose=password_reset`으로 리다이렉트하고 `App.js`에서 로그인 사용자 초기화가 비동기로 지연되는 사이, `AuthScreen`이 첫 렌더 프레임에 마운트되어 URL 쿼리스트링 전체를 `replaceState`로 제거해버림.
+    * **안전한 구조 개선**:
+      1. **백엔드 인가 URL에 네이버 규격 반영**: `POST /auth/v2/oauth/{provider}/authorize-url` 및 `GET /oauth/{provider}/authorize`에서 `provider == 'naver'`이고 `purpose == 'reauth'`일 때 `auth_type=reauthenticate`를 추가.
+      2. **DB state에 전체 목적(`reauth:password_add`) 원자적 보존**: `auth_single_use_tokens`의 `purpose` 컬럼에 `reauth:password_add` 형식으로 타겟 목적을 보존하고, 콜백 시 이를 파싱하여 `reauth_purpose=password_add`로 정확히 복원.
+      3. **콜백 리다이렉트 경로 지능형 보장**: `redirect_uri`가 생략된 경우에도 `reauth:password_add` 및 `link`의 기본 복귀 경로를 `http://127.0.0.1:3000?tab=settings`로 자동 설정.
+      4. **프론트엔드 동기 초기화 및 설정 탭 자동 복귀**:
+         - `App.js`에서 `user` 상태를 `localStorage`로부터 동기 지연 없이 즉시 초기화하여, 로그인 복귀 시 `AuthScreen`이 일시 마운트되거나 쿼리를 소거하지 않도록 방지.
+         - `App.js`의 `tab` 상태 초기화 시 `tab=settings`, `purpose=password_add`, 또는 재인증 `ticket` 수신 시 자동으로 `settings` 탭을 선택하여 `AccountManagementCard`가 즉시 마운트되도록 보장.
+      5. **모달 및 티켓 안전 처리**: `AccountManagementCard`가 `ticket`과 `purpose=password_add`를 감지하면 등록 모달을 열고, 브라우저 주소창에서 티켓 쿼리를 안전하게 정리 (`window.history.replaceState`). 비밀번호는 스토리지나 URL에 일체 노출되지 않음.
+    * **검증 현황**:
+      - 단위/통합 테스트: **79 passed, 8 skipped, 0 failed (100% 통과)** (`pytest`).
+      - 프론트엔드 빌드: `npm run build` 성공 (`Compiled successfully`).
+      - 사용자 브라우저 수동 확인 완료: 네이버 본인 재인증 -> 아이디/비밀번호 등록 성공, 로그아웃 후 등록한 아이디/비밀번호로 로그인 성공, 기존 운동 기록 등 데이터 정상 표시 확인 완료.
+
+17. **앱 공통 프로필과 로그인 수단 분리 및 사용자 정보 응답 통일 (2026-11-11)**:
+    * **원인 추적 (Root Cause)**:
+      1. **응답 구조 불일치**:
+         - `/auth/v2/oauth/exchange`: 최상위 필드로 `{ token, name, user_id, token_version }`을 반환하였으나, 등록된 `username`을 DB에서 조회하여 포함하지 않음.
+         - `/auth/v2/login` 및 `/auth/v2/register`: `{ token, user: { id, name, username } }` 형태로 중첩 객체를 반환하여 최상위 `name`, `username`이 누락됨.
+         - `AuthScreen.jsx`와 `App.js`의 `handleLogin`이 `res.data.name`을 직접 참조하여, 비밀번호 로그인 시 `name`이 `undefined`로 평가되어 `AppShell`의 `userName || "사용자"`로 폴백됨.
+      2. **사용자 정보 정기 동기화 부재**:
+         - `App.js`가 마운트 또는 새로고침 시 `/auth/v2/me`를 호출하여 표준 프로필을 가져오지 않고 `localStorage`의 문자열에만 의존하여, 새로고침 시 `username`이 유실되어 `@아이디` 대신 "소셜 계정"으로 오표시됨.
+      3. **계정 동일성 확인**:
+         - 소셜 로그인과 비밀번호 로그인은 동일한 DB `users.id`를 공유하며, `password_credentials`와 `social_accounts`가 동일 `user_id` 외래키로 올바르게 1:1/1:N 관계를 유지함을 확인.
+    * **앱 공통 닉네임 및 사용자 정보 개선 내역**:
+      1. **인증 응답 구조 통일**:
+         - `/auth/v2/login`, `/auth/v2/register`, `/auth/v2/oauth/exchange`, `/auth/v2/me` 전체에서 최상위 및 `user` 객체 양쪽에 `{ id, user_id, name, username, token_version }`을 동일하게 반환하도록 통일.
+         - `oauth/exchange`에서도 해당 사용자의 `password_credentials`를 조회하여 등록된 `username`이 있으면 즉시 반환.
+      2. **공통 닉네임 정책 준수 (users.name 1~50자)**:
+         - 신규 컬럼을 추가하지 않고 기존 `users.name`을 공통 닉네임으로 활용.
+         - 최초 소셜 계정 생성 시에만 소셜 프로필명을 초기 닉네임으로 사용하고, 이후 로그인/재인증/연동 시 기존 닉네임을 절대 덮어쓰지 않음.
+         - 아이디/비밀번호 추가 시에도 기존 닉네임을 변경하지 않음.
+      3. **프론트엔드 프로필 동기화 수렴**:
+         - `App.js`에서 토큰 존재 시 `/auth/v2/me`를 호출하여 표준 사용자 정보를 비동기 수렴.
+         - 설정 탭에서 비밀번호 등록/해제 시 `onProfileUpdate` 콜백을 통해 즉시 `/auth/v2/me`를 재조회하여 사이드바와 설정 화면이 새로고침 없이 즉시 동기화.
+         - 사용자 로그아웃 또는 401 만료 중 응답이 도착해도 세션이 부활하지 않도록 `token` 존재 여부 가드 추가.
+      4. **UI 표시 분리**:
+         - 사이드바 첫 줄: DB 공통 닉네임 (`user.name`).
+         - 사이드바 두 번째 줄: `user.username`이 있으면 `@아이디`, 없으면 `Overloader 계정` (로그인 수단에 따른 분기 제거).
+         - 구글/네이버/비밀번호 연동 여부는 설정 탭의 "로그인 수단 관리" 섹션에서 독립적으로 표시.
+      5. **닉네임 변경 UI 확인 결과**:
+         - 현재 별도의 닉네임 수정 UI/엔드포인트는 존재하지 않으며, 필요 시 추가 범위(예: `PATCH /auth/v2/me` 1~50자 닉네임 수정 API 및 설정 모달 UI)를 제안함.
+    * **검증 현황**:
+      - 백엔드 단위/통합 테스트: **81 passed, 8 skipped, 0 failed** (`pytest`, 스킵된 8건은 로컬 전용 PostgreSQL 컨테이너 통합 테스트이며 미검증 상태로 정확히 구분).
+        * 동일 user_id에 대해 비밀번호 로그인, OAuth 교환, GET /me 응답의 name/username 완전 일치 검증 추가.
+        * 소셜 이름 변경 시에도 기존 앱 닉네임 보존 검증 추가.
+      - 프론트엔드 테스트: **7 passed, 0 failed** (`react-scripts test`).
+      - 프론트엔드 빌드: `npm run build` 컴파일 성공 (`Compiled successfully`).

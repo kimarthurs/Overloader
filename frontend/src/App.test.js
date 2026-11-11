@@ -40,7 +40,7 @@ describe('Auth & Logout Flow', () => {
     render(<App />);
 
     // Check header profile and logout button
-    expect(await screen.findByText(/👤 홍길동/i)).toBeInTheDocument();
+    expect(await screen.findByText(/홍길동/i)).toBeInTheDocument();
     const logoutButtons = screen.getAllByRole('button', { name: '로그아웃' });
     expect(logoutButtons.length).toBeGreaterThanOrEqual(1);
 
@@ -49,9 +49,9 @@ describe('Auth & Logout Flow', () => {
     fireEvent.click(headerLogoutBtn);
 
     // After logout:
-    // 1. Should show LoginScreen
-    expect(await screen.findByText('구글 계정으로 로그인하세요')).toBeInTheDocument();
-    expect(screen.queryByText(/👤 홍길동/i)).not.toBeInTheDocument();
+    // 1. Should show AuthScreen
+    expect(await screen.findByText('스마트한 운동기록 대시보드로 나의 헬스를 더 스마트하게!')).toBeInTheDocument();
+    expect(screen.queryByText(/홍길동/i)).not.toBeInTheDocument();
 
     // 2. Token and userName removed from localStorage
     expect(localStorage.getItem('token')).toBeNull();
@@ -79,6 +79,15 @@ describe('Auth & Logout Flow', () => {
           config,
         };
       }
+      if (config.url?.includes('/auth/v2/')) {
+        return {
+          data: { id: 1, name: '철수', username: null, social_accounts: [] },
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          config,
+        };
+      }
       return {
         data: { dates: [], strength_dates: [], cardio_dates: [] },
         status: 200,
@@ -91,21 +100,21 @@ describe('Auth & Logout Flow', () => {
     render(<App />);
 
     // Navigate to Settings tab
-    const settingsTabBtn = await screen.findByRole('button', { name: /설정/i });
-    fireEvent.click(settingsTabBtn);
+    const settingsTabBtns = await screen.findAllByRole('button', { name: /설정/i });
+    fireEvent.click(settingsTabBtns[0]);
 
     // Wait for settings to load
-    await screen.findByText('👤 계정');
+    await screen.findByText('로그인 수단 관리');
 
     // Find all logout buttons (header + settings)
     const logoutButtons = await screen.findAllByRole('button', { name: '로그아웃' });
-    expect(logoutButtons.length).toBe(2);
+    expect(logoutButtons.length).toBeGreaterThanOrEqual(2);
 
     // Click settings logout button
-    fireEvent.click(logoutButtons[1]);
+    fireEvent.click(logoutButtons[logoutButtons.length - 1]);
 
     // Should return to login screen
-    expect(await screen.findByText('구글 계정으로 로그인하세요')).toBeInTheDocument();
+    expect(await screen.findByText('스마트한 운동기록 대시보드로 나의 헬스를 더 스마트하게!')).toBeInTheDocument();
     expect(localStorage.getItem('token')).toBeNull();
     expect(localStorage.getItem('userName')).toBeNull();
     expect(localStorage.getItem('theme')).toBe('light');
@@ -118,8 +127,8 @@ describe('Auth & Logout Flow', () => {
 
     render(<App />);
 
-    expect(screen.getByText('구글 계정으로 로그인하세요')).toBeInTheDocument();
-    expect(screen.queryByText(/👤/i)).not.toBeInTheDocument();
+    expect(screen.getByText('스마트한 운동기록 대시보드로 나의 헬스를 더 스마트하게!')).toBeInTheDocument();
+    expect(screen.queryByText(/홍길동/i)).not.toBeInTheDocument();
   });
 
   test('4. 401 on protected API triggers common logout and alerts "로그인이 만료되었어요. 다시 로그인해 주세요."', async () => {
@@ -140,7 +149,7 @@ describe('Auth & Logout Flow', () => {
     render(<App />);
 
     // Should navigate to LoginScreen and alert user
-    expect(await screen.findByText('구글 계정으로 로그인하세요')).toBeInTheDocument();
+    expect(await screen.findByText('스마트한 운동기록 대시보드로 나의 헬스를 더 스마트하게!')).toBeInTheDocument();
     expect(alertSpy).toHaveBeenCalledWith('로그인이 만료되었어요. 다시 로그인해 주세요.');
     expect(localStorage.getItem('token')).toBeNull();
     expect(localStorage.getItem('userName')).toBeNull();

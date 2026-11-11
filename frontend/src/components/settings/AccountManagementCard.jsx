@@ -5,7 +5,7 @@ import { UserIcon, LogoutIcon, EyeIcon, EyeOffIcon } from "../common/Icons";
 const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 const SPECIAL_CHAR_REGEX = /[!"#$%&'()*+,-./:;<=>?@[\\\]^_`{|}~]/;
 
-export default function AccountManagementCard({ userName, onLogout }) {
+export default function AccountManagementCard({ userName, onLogout, onProfileUpdate }) {
   const [methods, setMethods] = useState(null);
 
   const [successMsg, setSuccessMsg] = useState("");
@@ -13,6 +13,7 @@ export default function AccountManagementCard({ userName, onLogout }) {
   // 모달 상태
   const [changePwdOpen, setChangePwdOpen] = useState(false);
   const [addPwdOpen, setAddPwdOpen] = useState(false);
+  const [reauthTicket, setReauthTicket] = useState(null);
   const [unlinkConfirmTarget, setUnlinkConfirmTarget] = useState(null); // { type: "social"|"password", provider?: "google"|"naver" }
 
   // 폼 입력 상태
@@ -39,11 +40,37 @@ export default function AccountManagementCard({ userName, onLogout }) {
 
   useEffect(() => {
     fetchMethods();
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get("error");
-    if (err === "google_oauth_pending") {
-      setModalError("구글 소셜 계정 연동은 준비 중입니다. 현재는 네이버 소셜 계정 연동을 지원합니다.");
-      window.history.replaceState({}, document.title, window.location.pathname);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const ticketParam = params.get("ticket");
+      const purposeParam = params.get("purpose");
+      const statusParam = params.get("status");
+      const errParam = params.get("error");
+
+      if (ticketParam && purposeParam === "password_add") {
+        setReauthTicket(ticketParam);
+        setAddPwdOpen(true);
+        setSuccessMsg("소셜 본인 인증이 완료되었습니다. 사용할 아이디와 비밀번호를 입력해 주세요.");
+        window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");
+      } else if (statusParam === "link_success") {
+        const prov = params.get("provider") || "소셜";
+        const provLabel = prov === "naver" ? "네이버" : prov === "google" ? "Google" : prov;
+        setSuccessMsg(`${provLabel} 계정 연동이 완료되었습니다.`);
+        window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");
+      } else if (errParam) {
+        if (errParam === "already_linked_to_other_user") {
+          setModalError("해당 소셜 계정은 이미 다른 사용자의 계정에 연동되어 있습니다.");
+        } else if (errParam === "reauth_user_mismatch") {
+          setModalError("현재 로그인된 계정에 연동된 소셜 계정과 일치하지 않습니다.");
+        } else if (errParam === "google_oauth_pending") {
+          setModalError("구글 소셜 계정 연동은 준비 중입니다. 현재는 네이버 소셜 계정 연동을 지원합니다.");
+        } else {
+          setModalError(`인증 오류: ${errParam}`);
+        }
+        window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");
+      }
+    } catch (e) {
+      // ignore
     }
   }, [fetchMethods]);
 
@@ -101,6 +128,7 @@ export default function AccountManagementCard({ userName, onLogout }) {
       setNewPassword("");
       setConfirmPassword("");
       fetchMethods();
+      onProfileUpdate?.();
     } catch (err) {
       const detail = err.response?.data?.detail;
       setModalError(detail || "비밀번호 변경에 실패했습니다. 현재 비밀번호를 다시 확인하세요.");
@@ -115,20 +143,63 @@ export default function AccountManagementCard({ userName, onLogout }) {
     const cleanUsername = addUsername.trim().toLowerCase();
     if (!cleanUsername || !isPasswordValid || !isPasswordMatch || actionLoading) return;
 
+    if (!reauthTicket) {
+      startSocialReauthForPasswordAdd();
+      return;
+    }
+
     setActionLoading(true);
     setModalError("");
 
     try {
-      // 소셜 계정 재인증 티켓 발급 (로컬 모의 환경 또는 저장된 티켓)
-      // 로컬 mock flow: 모의 재인증 티켓 요청 또는 모의 엔드포인트
-      const redirectUri = window.location.origin;
-      const sid = sessionStorage.getItem("overloader_auth_sid") || "sid_add_pwd";
-      
-      // 소셜 재인증 플로우 시작 (모의 또는 실제)
-      const primaryProvider = methods?.social_accounts?.[0]?.provider || "google";
-      window.location.href = `${API}/auth/v2/oauth/${primaryProvider}/authorize?purpose=reauth&target_purpose=password_add&session_id=${encodeURIComponent(sid)}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+      const addRes = await axios.post(`${API}/auth/v2/account/password/add`, {
+        username: cleanUsername,
+        password: newPassword,
+        reauth_ticket: reauthTicket
+      });
+
+      if (addRes.data.token) {
+        localStorage.setItem("token", addRes.data.token);
+        axios.defaults.headers.common["Authorization"] = `Bearer ${addRes.data.token}`;
+      }
+
+      setSuccessMsg("아이디와 비밀번호가 성공적으로 등록되었습니다.");
+      setTimeout(() => setSuccessMsg(""), 3500);
+      setAddPwdOpen(false);
+      setReauthTicket(null);
+      setAddUsername("");
+      setNewPassword("");
+      setConfirmPassword("");
+      fetchMethods();
+      onProfileUpdate?.();
     } catch (err) {
-      setModalError("소셜 본인 인증 시작에 실패했습니다.");
+      const detail = err.response?.data?.detail;
+      setModalError(detail || "아이디/비밀번호 등록에 실패했습니다.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const startSocialReauthForPasswordAdd = async (overrideProvider) => {
+    setActionLoading(true);
+    setModalError("");
+    try {
+      const prov = overrideProvider || methods?.social_accounts?.[0]?.provider || "naver";
+      const redirectUri = `${window.location.origin}?tab=settings`;
+      const res = await axios.post(`${API}/auth/v2/oauth/${prov}/authorize-url`, {
+        purpose: "reauth",
+        target_purpose: "password_add",
+        redirect_uri: redirectUri
+      });
+      const authUrl = res.data.authorization_url;
+      if (authUrl.startsWith("https://nid.naver.com/") || authUrl.startsWith("https://accounts.google.com/") || authUrl.startsWith("/auth/v2/oauth/")) {
+        window.location.href = authUrl;
+      } else {
+        throw new Error("허용되지 않은 인가 URL입니다.");
+      }
+    } catch (err) {
+      const detail = err.response?.data?.detail || err.message || "소셜 본인 인증 시작에 실패했습니다.";
+      setModalError(detail);
       setActionLoading(false);
     }
   };
@@ -184,6 +255,7 @@ export default function AccountManagementCard({ userName, onLogout }) {
       setUnlinkConfirmTarget(null);
       setCurrentPassword("");
       fetchMethods();
+      onProfileUpdate?.();
     } catch (err) {
       const detail = err.response?.data?.detail;
       setModalError(detail || "연동 해제에 실패했습니다.");
@@ -193,11 +265,26 @@ export default function AccountManagementCard({ userName, onLogout }) {
   };
 
   // ── 소셜 계정 연동 시작 (Google / Naver link) ──
-  const startOAuthLink = (provider) => {
-    const redirectUri = window.location.origin;
-    const sid = sessionStorage.getItem("overloader_auth_sid") || "sid_link";
-    const token = localStorage.getItem("token");
-    window.location.href = `${API}/auth/v2/oauth/${provider}/authorize?purpose=link&auth_token=${encodeURIComponent(token || "")}&session_id=${encodeURIComponent(sid)}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  const startOAuthLink = async (provider) => {
+    setActionLoading(true);
+    setModalError("");
+    try {
+      const redirectUri = `${window.location.origin}?tab=settings`;
+      const res = await axios.post(`${API}/auth/v2/oauth/${provider}/authorize-url`, {
+        purpose: "link",
+        redirect_uri: redirectUri
+      });
+      const authUrl = res.data.authorization_url;
+      if (authUrl.startsWith("https://nid.naver.com/") || authUrl.startsWith("https://accounts.google.com/") || authUrl.startsWith("/auth/v2/oauth/")) {
+        window.location.href = authUrl;
+      } else {
+        throw new Error("허용되지 않은 인가 URL입니다.");
+      }
+    } catch (err) {
+      const detail = err.response?.data?.detail || err.message || "소셜 계정 연동 시작에 실패했습니다.";
+      setModalError(detail);
+      setActionLoading(false);
+    }
   };
 
   const googleAcc = methods?.social_accounts?.find(a => a.provider === "google");
@@ -571,94 +658,161 @@ export default function AccountManagementCard({ userName, onLogout }) {
               </h3>
               <button
                 type="button"
-                onClick={() => setAddPwdOpen(false)}
+                onClick={() => {
+                  setAddPwdOpen(false);
+                  setReauthTicket(null);
+                  setModalError("");
+                }}
                 style={styles.closeBtn}
               >
                 ✕
               </button>
             </div>
 
-            <p style={{ fontSize: 13, color: "var(--sub)", lineHeight: 1.5, margin: "0 0 16px" }}>
-              아이디와 비밀번호를 등록하면 소셜 로그인 외에도 일반 아이디로 로그인할 수 있습니다. 등록을 위해 소셜 계정 본인 인증이 진행됩니다.
-            </p>
-
             {modalError && <div style={styles.alertError}>{modalError}</div>}
 
-            <form onSubmit={handleAddPassword} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div>
-                <label style={styles.label}>사용할 아이디</label>
-                <input
-                  type="text"
-                  value={addUsername}
-                  onChange={(e) => setAddUsername(e.target.value.toLowerCase().replace(/\s+/g, ""))}
-                  placeholder="4~20자 영문 소문자, 숫자, _"
-                  required
-                  style={styles.input}
-                />
-              </div>
+            {reauthTicket ? (
+              // 2단계: 소셜 본인 인증 완료 후 아이디/비밀번호 입력 폼
+              <>
+                <div style={{ ...styles.alertSuccess, marginBottom: 14 }}>
+                  ✅ 소셜 계정 본인 인증이 완료되었습니다. 등록할 아이디와 비밀번호를 입력해 주세요.
+                </div>
 
-              <div>
-                <label style={styles.label}>비밀번호</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="8~128자 영문 대소문자, 숫자, 기호"
-                  required
-                  style={styles.input}
-                />
-                <div style={styles.criteriaBox}>
-                  <div style={styles.criteriaItem(criteria.length)}>
-                    <span style={styles.criteriaCheck(criteria.length)}>✓</span> 8자 이상 128자 이하
+                <form onSubmit={handleAddPassword} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <label style={styles.label}>사용할 아이디</label>
+                    <input
+                      type="text"
+                      value={addUsername}
+                      onChange={(e) => setAddUsername(e.target.value.toLowerCase().replace(/\s+/g, ""))}
+                      placeholder="4~20자 영문 소문자, 숫자, _"
+                      required
+                      style={styles.input}
+                    />
                   </div>
-                  <div style={styles.criteriaItem(criteria.hasUpper)}>
-                    <span style={styles.criteriaCheck(criteria.hasUpper)}>✓</span> 영문 대문자
+
+                  <div>
+                    <label style={styles.label}>비밀번호</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="8~128자 영문 대소문자, 숫자, 기호"
+                      required
+                      style={styles.input}
+                    />
+                    <div style={styles.criteriaBox}>
+                      <div style={styles.criteriaItem(criteria.length)}>
+                        <span style={styles.criteriaCheck(criteria.length)}>✓</span> 8자 이상 128자 이하
+                      </div>
+                      <div style={styles.criteriaItem(criteria.hasUpper)}>
+                        <span style={styles.criteriaCheck(criteria.hasUpper)}>✓</span> 영문 대문자
+                      </div>
+                      <div style={styles.criteriaItem(criteria.hasLower)}>
+                        <span style={styles.criteriaCheck(criteria.hasLower)}>✓</span> 영문 소문자
+                      </div>
+                      <div style={styles.criteriaItem(criteria.hasNumber)}>
+                        <span style={styles.criteriaCheck(criteria.hasNumber)}>✓</span> 숫자
+                      </div>
+                      <div style={styles.criteriaItem(criteria.hasSpecial)}>
+                        <span style={styles.criteriaCheck(criteria.hasSpecial)}>✓</span> 특수문자(기호)
+                      </div>
+                    </div>
                   </div>
-                  <div style={styles.criteriaItem(criteria.hasLower)}>
-                    <span style={styles.criteriaCheck(criteria.hasLower)}>✓</span> 영문 소문자
+
+                  <div>
+                    <label style={styles.label}>비밀번호 확인</label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="비밀번호 다시 입력"
+                      required
+                      style={styles.input}
+                    />
                   </div>
-                  <div style={styles.criteriaItem(criteria.hasNumber)}>
-                    <span style={styles.criteriaCheck(criteria.hasNumber)}>✓</span> 숫자
+
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddPwdOpen(false);
+                        setReauthTicket(null);
+                        setModalError("");
+                      }}
+                      style={{ ...styles.btnGhost, flex: 1 }}
+                    >
+                      취소
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={actionLoading || !addUsername || !isPasswordValid || !isPasswordMatch}
+                      style={{
+                        ...styles.btnPrimary,
+                        flex: 1,
+                        opacity: (actionLoading || !addUsername || !isPasswordValid || !isPasswordMatch) ? 0.5 : 1
+                      }}
+                    >
+                      {actionLoading ? "등록 처리 중..." : "아이디/비밀번호 등록 완료"}
+                    </button>
                   </div>
-                  <div style={styles.criteriaItem(criteria.hasSpecial)}>
-                    <span style={styles.criteriaCheck(criteria.hasSpecial)}>✓</span> 특수문자(기호)
-                  </div>
+                </form>
+              </>
+            ) : (
+              // 1단계: 소셜 본인 인증 시작 안내
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <p style={{ fontSize: 13, color: "var(--sub)", lineHeight: 1.6, margin: 0 }}>
+                  소셜 로그인 전용 계정입니다.<br />
+                  보안을 위해 먼저 연동된 소셜 계정으로 본인 인증을 진행한 후 아이디와 비밀번호를 등록합니다.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                  {methods?.social_accounts?.map((acc) => (
+                    <button
+                      key={acc.provider}
+                      type="button"
+                      disabled={actionLoading}
+                      onClick={() => startSocialReauthForPasswordAdd(acc.provider)}
+                      style={{
+                        ...styles.btnPrimary,
+                        backgroundColor: acc.provider === "naver" ? "#03C75A" : "var(--accent)",
+                        color: "#fff",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                        padding: "12px",
+                        fontSize: "14px",
+                        fontWeight: "700"
+                      }}
+                    >
+                      <span>{acc.provider === "naver" ? "네이버" : "Google"} 계정으로 본인 인증</span>
+                    </button>
+                  ))}
+                  {(!methods?.social_accounts || methods.social_accounts.length === 0) && (
+                    <button
+                      type="button"
+                      disabled={actionLoading}
+                      onClick={() => startSocialReauthForPasswordAdd("naver")}
+                      style={{ ...styles.btnPrimary, padding: "12px" }}
+                    >
+                      소셜 계정 본인 인증 시작
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddPwdOpen(false);
+                      setModalError("");
+                    }}
+                    style={{ ...styles.btnGhost, padding: "8px 16px" }}
+                  >
+                    취소
+                  </button>
                 </div>
               </div>
-
-              <div>
-                <label style={styles.label}>비밀번호 확인</label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="비밀번호 다시 입력"
-                  required
-                  style={styles.input}
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => setAddPwdOpen(false)}
-                  style={{ ...styles.btnGhost, flex: 1 }}
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  disabled={actionLoading || !addUsername || !isPasswordValid || !isPasswordMatch}
-                  style={{
-                    ...styles.btnPrimary,
-                    flex: 1,
-                    opacity: (actionLoading || !addUsername || !isPasswordValid || !isPasswordMatch) ? 0.5 : 1
-                  }}
-                >
-                  {actionLoading ? "인증 이동 중..." : "본인 인증 후 등록"}
-                </button>
-              </div>
-            </form>
+            )}
           </div>
         </div>
       )}

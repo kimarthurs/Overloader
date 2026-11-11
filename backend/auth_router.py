@@ -212,6 +212,13 @@ class OAuthExchangeRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+class OAuthAuthorizeUrlRequest(BaseModel):
+    purpose: str = Field(default="link")
+    target_purpose: Optional[str] = None
+    redirect_uri: Optional[str] = None
+    session_id: Optional[str] = None
+
+
 class PasswordResetRequest(BaseModel):
     reauth_ticket: str
     new_password: str
@@ -399,13 +406,17 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
         session_id = generate_session_id()
         token = create_access_token(user_id=user_id, token_version=1, session_id=session_id)
 
+        user_dict = {
+            "id": user_id,
+            "user_id": user_id,
+            "name": valid_name,
+            "username": valid_username,
+            "token_version": 1,
+        }
         return {
             "token": token,
-            "user": {
-                "id": user_id,
-                "name": valid_name,
-                "username": valid_username,
-            }
+            "user": user_dict,
+            **user_dict,
         }
 
     @router.post("/login")
@@ -459,13 +470,17 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
         session_id = generate_session_id()
         token = create_access_token(user_id=user_id, token_version=token_ver, session_id=session_id)
 
+        user_dict = {
+            "id": user_id,
+            "user_id": user_id,
+            "name": display_name,
+            "username": normalized_username,
+            "token_version": token_ver,
+        }
         return {
             "token": token,
-            "user": {
-                "id": user_id,
-                "name": display_name,
-                "username": normalized_username,
-            }
+            "user": user_dict,
+            **user_dict,
         }
 
     @router.get("/me")
@@ -480,11 +495,16 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                 row = cur.fetchone()
                 username = row[0] if row else None
 
-        return {
+        user_dict = {
             "id": current_user["user_id"],
+            "user_id": current_user["user_id"],
             "name": current_user["name"],
             "username": username,
             "token_version": current_user["token_version"],
+        }
+        return {
+            **user_dict,
+            "user": user_dict,
         }
 
     @router.post("/reauth/password")
@@ -869,6 +889,10 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                     conn.rollback()
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자 정보를 찾을 수 없습니다.")
 
+                cur.execute("SELECT username FROM password_credentials WHERE user_id = %s", (user_id,))
+                pwd_row = cur.fetchone()
+                username = pwd_row[0] if pwd_row else None
+
                 conn.commit()
 
         u_id, u_name, u_ver = user_row
@@ -878,12 +902,128 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
             session_id=session_id,
         )
 
-        return {
-            "token": access_token,
-            "name": u_name,
+        user_dict = {
+            "id": u_id,
             "user_id": u_id,
+            "name": u_name,
+            "username": username,
             "token_version": u_ver,
         }
+        return {
+            "token": access_token,
+            "user": user_dict,
+            **user_dict,
+        }
+
+    @router.post("/oauth/{provider}/authorize-url")
+    async def get_oauth_authorize_url(
+        provider: str,
+        req: OAuthAuthorizeUrlRequest,
+        current_user: Dict[str, Any] = Depends(get_current_user_v2),
+    ):
+        """
+        Creates an authenticated provider OAuth redirect URL for logged-in user operations (link / reauth).
+        Guarantees JWT is NEVER exposed in URL query parameters, state, or Referer.
+        Enforces user ownership, safe redirect origin, single-use state generation, and provider whitelist.
+        """
+        provider = provider.strip().lower()
+        if provider not in ("google", "naver"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"지원하지 않는 제공자입니다: {provider}")
+
+        purpose = req.purpose.strip().lower()
+        if purpose not in ("link", "reauth"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"지원하지 않는 목적입니다: {purpose}")
+
+        target_redirect = req.redirect_uri or "http://127.0.0.1:3000"
+        if not is_safe_redirect_uri(target_redirect):
+            target_redirect = "http://127.0.0.1:3000"
+
+        bound_user_id = current_user["user_id"]
+        sid = (req.session_id or current_user.get("session_id") or "").strip()
+        if not sid:
+            sid = generate_session_id()
+
+        # If reauth, verify this user actually has this provider linked in social_accounts
+        if purpose == "reauth":
+            with db_session() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT 1 FROM social_accounts
+                        WHERE user_id = %s AND provider = %s
+                    """, (bound_user_id, provider))
+                    if not cur.fetchone():
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"현재 계정에 {provider.capitalize()} 소셜 연동이 존재하지 않아 본인 인증을 진행할 수 없습니다."
+                        )
+
+        full_purpose = f"reauth:{req.target_purpose}" if (purpose == "reauth" and req.target_purpose) else purpose
+        state_secret = secrets.token_urlsafe(32)
+        with db_session() as conn:
+            with conn.cursor() as cur:
+                store_oauth_state(
+                    cur=cur,
+                    state_secret=state_secret,
+                    session_id=sid,
+                    purpose=full_purpose,
+                    user_id=bound_user_id,
+                    target_provider=provider,
+                    ttl_seconds=600,
+                )
+                conn.commit()
+
+        env_name = os.getenv("ENV", os.getenv("APP_ENV", "development")).lower()
+        is_prod = env_name in ("production", "prod") or (os.getenv("VERCEL") is not None)
+        allow_mock = (os.getenv("USE_MOCK_OAUTH", "false").lower() in ("true", "1")) and not is_prod
+
+        if allow_mock and (os.getenv("USE_MOCK_OAUTH", "false").lower() in ("true", "1")):
+            mock_url = (
+                f"/auth/v2/oauth/{provider}/mock-consent?"
+                f"state={state_secret}&session_id={sid}&purpose={purpose}&redirect_uri={target_redirect}"
+            )
+            if req.target_purpose:
+                mock_url += f"&target_purpose={req.target_purpose}"
+            return {"authorization_url": mock_url, "provider": provider, "purpose": purpose}
+
+        if provider == "google":
+            client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+            if not client_id:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="GOOGLE_CLIENT_ID 환경변수가 설정되지 않았습니다."
+                )
+            google_callback = os.getenv("GOOGLE_CALLBACK_URL", "http://127.0.0.1:8000/auth/v2/oauth/google/callback").strip()
+            expected_nonce = hash_token_or_code(f"google_nonce:{state_secret}")[:32]
+            auth_params = {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": google_callback,
+                "scope": "openid email profile",
+                "state": state_secret,
+                "nonce": expected_nonce,
+                "prompt": "select_account",
+            }
+            auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(auth_params)}"
+            return {"authorization_url": auth_url, "provider": provider, "purpose": purpose}
+
+        elif provider == "naver":
+            client_id = os.getenv("NAVER_CLIENT_ID", "").strip()
+            if not client_id:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="NAVER_CLIENT_ID 환경변수가 설정되지 않았습니다."
+                )
+            naver_callback = os.getenv("NAVER_CALLBACK_URL", "http://127.0.0.1:8000/auth/v2/oauth/naver/callback")
+            auth_params = {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": naver_callback,
+                "state": state_secret,
+            }
+            if purpose == "reauth":
+                auth_params["auth_type"] = "reauthenticate"
+            auth_url = f"https://nid.naver.com/oauth2.0/authorize?{urlencode(auth_params)}"
+            return {"authorization_url": auth_url, "provider": provider, "purpose": purpose}
 
     @router.get("/oauth/{provider}/authorize")
     async def oauth_authorize(
@@ -935,6 +1075,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
             elif target_purpose != "password_reset":
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="재인증을 위해 로그인이 필요합니다.")
 
+        full_purpose = f"reauth:{target_purpose}" if (purpose == "reauth" and target_purpose) else purpose
         state_secret = secrets.token_urlsafe(32)
         with db_session() as conn:
             with conn.cursor() as cur:
@@ -942,7 +1083,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                     cur=cur,
                     state_secret=state_secret,
                     session_id=sid,
-                    purpose=purpose,
+                    purpose=full_purpose,
                     user_id=bound_user_id,
                     target_provider=provider,
                     ttl_seconds=600,
@@ -1003,6 +1144,8 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                 "redirect_uri": naver_callback,
                 "state": state_secret,
             }
+            if purpose == "reauth":
+                auth_params["auth_type"] = "reauthenticate"
             auth_url = f"https://nid.naver.com/oauth2.0/authorize?{urlencode(auth_params)}"
             return RedirectResponse(url=auth_url)
 
@@ -1102,9 +1245,11 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                 detail="운영 환경 또는 모의 인증 비활성화 상태에서는 모의 인증 파라미터를 사용할 수 없습니다."
             )
 
+        sep = "&" if "?" in target_redirect else "?"
+
         if error:
             err_msg = error_description or error
-            return RedirectResponse(url=f"{target_redirect}?error={err_msg}")
+            return RedirectResponse(url=f"{target_redirect}{sep}error={err_msg}")
 
         from datetime import datetime, timezone
 
@@ -1121,23 +1266,38 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                     row = cur.fetchone()
                     if not row:
                         conn.rollback()
-                        return RedirectResponse(url=f"{target_redirect}?error=state_not_found")
+                        return RedirectResponse(url=f"{target_redirect}{sep}error=state_not_found")
 
                     _id, st_user_id, st_session_id, st_purpose, st_provider, consumed_at, expires_at = row
                     if consumed_at is not None:
                         conn.rollback()
-                        return RedirectResponse(url=f"{target_redirect}?error=state_already_consumed")
+                        return RedirectResponse(url=f"{target_redirect}{sep}error=state_already_consumed")
 
                     if expires_at.tzinfo is not None:
                         expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
                     now = datetime.now(timezone.utc).replace(tzinfo=None)
                     if expires_at < now:
                         conn.rollback()
-                        return RedirectResponse(url=f"{target_redirect}?error=state_expired")
+                        return RedirectResponse(url=f"{target_redirect}{sep}error=state_expired")
 
                     if st_provider and st_provider != provider:
                         conn.rollback()
-                        return RedirectResponse(url=f"{target_redirect}?error=provider_mismatch")
+                        return RedirectResponse(url=f"{target_redirect}{sep}error=provider_mismatch")
+
+                    base_purpose = st_purpose.split(":")[0] if st_purpose else "login"
+                    saved_target_purpose = st_purpose.split(":", 1)[1] if (st_purpose and ":" in st_purpose) else None
+                    effective_target_purpose = target_purpose or saved_target_purpose
+
+                    if redirect_uri and is_safe_redirect_uri(redirect_uri):
+                        target_redirect = redirect_uri
+                    elif base_purpose == "reauth" and effective_target_purpose == "password_add":
+                        target_redirect = "http://127.0.0.1:3000?tab=settings"
+                    elif base_purpose in ("link", "reauth"):
+                        target_redirect = "http://127.0.0.1:3000?tab=settings"
+                    else:
+                        target_redirect = "http://127.0.0.1:3000"
+
+                    sep = "&" if "?" in target_redirect else "?"
 
                     cur.execute("UPDATE auth_single_use_tokens SET consumed_at = now() WHERE id = %s", (_id,))
 
@@ -1151,13 +1311,13 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                         if provider == "naver":
                             if not code:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=missing_auth_code")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=missing_auth_code")
 
                             client_id = os.getenv("NAVER_CLIENT_ID", "").strip()
                             client_secret = os.getenv("NAVER_CLIENT_SECRET", "").strip()
                             if not client_id or not client_secret:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=naver_credentials_not_configured")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=naver_credentials_not_configured")
 
                             # 1. Exchange authorization code for access_token with Naver
                             token_url = "https://nid.naver.com/oauth2.0/token"
@@ -1173,13 +1333,13 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                                     token_res = await http_client.post(token_url, data=token_params)
                                     if token_res.status_code != 200:
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=naver_token_request_failed")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=naver_token_request_failed")
                                     token_json = token_res.json()
                                     naver_access_token = token_json.get("access_token")
                                     if not naver_access_token:
                                         conn.rollback()
                                         err_code = token_json.get("error_description") or token_json.get("error") or "token_missing"
-                                        return RedirectResponse(url=f"{target_redirect}?error={err_code}")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error={err_code}")
 
                                     # 2. Fetch profile from Naver Profile API
                                     profile_url = "https://openapi.naver.com/v1/nid/me"
@@ -1187,18 +1347,18 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                                     profile_res = await http_client.get(profile_url, headers=headers)
                                     if profile_res.status_code != 200:
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=naver_profile_request_failed")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=naver_profile_request_failed")
 
                                     profile_json = profile_res.json()
                                     if profile_json.get("resultcode") != "00":
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=naver_profile_error")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=naver_profile_error")
 
                                     account_data = profile_json.get("response", {})
                                     raw_id = account_data.get("id")
                                     if not raw_id:
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=naver_id_missing")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=naver_id_missing")
 
                                     prov_uid = str(raw_id).strip()
                                     # Email is strictly optional: user may decline or not have email verified on Naver
@@ -1207,20 +1367,20 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                                     prov_name = str(raw_name).strip()[:50]
                             except httpx.TimeoutException:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=naver_timeout")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=naver_timeout")
                             except Exception as e:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=naver_communication_error")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=naver_communication_error")
                         elif provider == "google":
                             if not code:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=missing_auth_code")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=missing_auth_code")
 
                             client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
                             client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
                             if not client_id or not client_secret:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=google_credentials_not_configured")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=google_credentials_not_configured")
 
                             google_callback = os.getenv("GOOGLE_CALLBACK_URL", "http://127.0.0.1:8000/auth/v2/oauth/google/callback").strip()
                             token_url = "https://oauth2.googleapis.com/token"
@@ -1237,14 +1397,14 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                                     token_res = await http_client.post(token_url, data=token_data)
                                     if token_res.status_code != 200:
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=google_token_request_failed")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=google_token_request_failed")
 
                                     token_json = token_res.json()
                                     raw_id_token = token_json.get("id_token")
                                     google_access_token = token_json.get("access_token")
                                     if not raw_id_token:
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=google_id_token_missing")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=google_id_token_missing")
 
                                     # 1. ID Token Verification using official google-auth library
                                     try:
@@ -1255,24 +1415,24 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                                         )
                                     except Exception:
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=invalid_id_token")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=invalid_id_token")
 
                                     # Verify issuer
                                     if idinfo.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=invalid_id_token_issuer")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=invalid_id_token_issuer")
 
                                     # Verify nonce if present in ID token
                                     expected_nonce = hash_token_or_code(f"google_nonce:{state}")[:32]
                                     token_nonce = idinfo.get("nonce")
                                     if token_nonce and token_nonce != expected_nonce:
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=nonce_mismatch")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=nonce_mismatch")
 
                                     id_sub = idinfo.get("sub")
                                     if not id_sub:
                                         conn.rollback()
-                                        return RedirectResponse(url=f"{target_redirect}?error=google_sub_missing")
+                                        return RedirectResponse(url=f"{target_redirect}{sep}error=google_sub_missing")
 
                                     # 2. OIDC UserInfo endpoint verification
                                     if google_access_token:
@@ -1286,10 +1446,10 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                                             userinfo_sub = userinfo_json.get("sub")
                                             if userinfo_sub and userinfo_sub != id_sub:
                                                 conn.rollback()
-                                                return RedirectResponse(url=f"{target_redirect}?error=sub_mismatch")
+                                                return RedirectResponse(url=f"{target_redirect}{sep}error=sub_mismatch")
                                         else:
                                             conn.rollback()
-                                            return RedirectResponse(url=f"{target_redirect}?error=google_userinfo_request_failed")
+                                            return RedirectResponse(url=f"{target_redirect}{sep}error=google_userinfo_request_failed")
 
                                     prov_uid = str(id_sub).strip()
                                     prov_email = (idinfo.get("email") or "").strip() or None
@@ -1297,15 +1457,15 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                                     prov_name = str(raw_name).strip()[:50]
                             except httpx.TimeoutException:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=google_timeout")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=google_timeout")
                             except Exception as e:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=google_communication_error")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=google_communication_error")
                         else:
                             conn.rollback()
-                            return RedirectResponse(url=f"{target_redirect}?error=unsupported_provider")
+                            return RedirectResponse(url=f"{target_redirect}{sep}error=unsupported_provider")
 
-                    if st_purpose == "login":
+                    if base_purpose == "login":
                         cur.execute("""
                             SELECT user_id FROM social_accounts
                             WHERE provider = %s AND provider_user_id = %s
@@ -1341,13 +1501,13 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                         conn.commit()
 
                         return RedirectResponse(
-                            url=f"{target_redirect}?exchange_code={exchange_code}&session_id={st_session_id}"
+                            url=f"{target_redirect}{sep}exchange_code={exchange_code}&session_id={st_session_id}"
                         )
 
-                    elif st_purpose == "link":
+                    elif base_purpose == "link":
                         if not st_user_id:
                             conn.rollback()
-                            return RedirectResponse(url=f"{target_redirect}?error=missing_user_for_link")
+                            return RedirectResponse(url=f"{target_redirect}{sep}error=missing_user_for_link")
 
                         cur.execute("""
                             SELECT user_id FROM social_accounts
@@ -1356,7 +1516,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                         existing = cur.fetchone()
                         if existing and existing[0] != st_user_id:
                             conn.rollback()
-                            return RedirectResponse(url=f"{target_redirect}?error=already_linked_to_other_user")
+                            return RedirectResponse(url=f"{target_redirect}{sep}error=already_linked_to_other_user")
 
                         cur.execute("""
                             INSERT INTO social_accounts (user_id, provider, provider_user_id, email)
@@ -1368,9 +1528,9 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                             cur.execute("UPDATE users SET google_id = %s WHERE id = %s AND google_id IS NULL", (prov_uid, st_user_id))
 
                         conn.commit()
-                        return RedirectResponse(url=f"{target_redirect}?status=link_success&provider={provider}")
+                        return RedirectResponse(url=f"{target_redirect}{sep}status=link_success&provider={provider}")
 
-                    elif st_purpose == "reauth":
+                    elif base_purpose == "reauth":
                         target_user_id = st_user_id
                         if not target_user_id:
                             # Logged out reauth for password reset: find user associated with this social account
@@ -1381,7 +1541,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                             u_acc = cur.fetchone()
                             if not u_acc:
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=social_account_not_registered")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=social_account_not_registered")
                             target_user_id = u_acc[0]
                         else:
                             # Logged in reauth: verify this social account belongs to currently logged in user
@@ -1391,16 +1551,16 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                             """, (target_user_id, provider, prov_uid))
                             if not cur.fetchone():
                                 conn.rollback()
-                                return RedirectResponse(url=f"{target_redirect}?error=reauth_user_mismatch")
+                                return RedirectResponse(url=f"{target_redirect}{sep}error=reauth_user_mismatch")
 
                         cur.execute("SELECT token_version FROM users WHERE id = %s", (target_user_id,))
                         u_row = cur.fetchone()
                         if not u_row:
                             conn.rollback()
-                            return RedirectResponse(url=f"{target_redirect}?error=user_not_found")
+                            return RedirectResponse(url=f"{target_redirect}{sep}error=user_not_found")
 
                         t_ver = u_row[0]
-                        reauth_purpose = target_purpose or REAUTH_PURPOSE_PASSWORD_RESET
+                        reauth_purpose = effective_target_purpose or REAUTH_PURPOSE_PASSWORD_RESET
                         ticket, jti = create_reauth_ticket(
                             user_id=target_user_id,
                             purpose=reauth_purpose,
@@ -1418,14 +1578,14 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                             target_provider=provider,
                         )
                         conn.commit()
-                        return RedirectResponse(url=f"{target_redirect}?ticket={ticket}&purpose={reauth_purpose}&session_id={st_session_id}")
+                        return RedirectResponse(url=f"{target_redirect}{sep}ticket={ticket}&purpose={reauth_purpose}&session_id={st_session_id}")
 
                 except HTTPException:
                     conn.rollback()
                     raise
                 except Exception as e:
                     conn.rollback()
-                    return RedirectResponse(url=f"{target_redirect}?error={str(e)}")
+                    return RedirectResponse(url=f"{target_redirect}{sep}error={str(e)}")
 
     @router.post("/account/password/reset")
     async def reset_password(req: PasswordResetRequest, request: Request):
