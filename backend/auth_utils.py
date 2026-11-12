@@ -415,12 +415,12 @@ def decode_and_validate_access_token(
         raise TokenClaimMissingError("Token payload missing required 'sub' claim")
 
     # 4. Token version verification
-    if expected_token_version is not None:
-        token_ver = payload.get("ver")
-        if token_ver is None:
-            if not allow_legacy_no_version:
-                raise TokenVersionMismatchError("Legacy token lacking version is not permitted")
-        elif int(token_ver) != int(expected_token_version):
+    token_ver = payload.get("ver")
+    if token_ver is None:
+        if not allow_legacy_no_version:
+            raise TokenVersionMismatchError("Legacy token lacking version is not permitted")
+    elif expected_token_version is not None:
+        if int(token_ver) != int(expected_token_version):
             raise TokenVersionMismatchError(
                 f"Token version {token_ver} has been revoked (current active version: {expected_token_version})"
             )

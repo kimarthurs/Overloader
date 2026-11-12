@@ -30,8 +30,6 @@ os.environ["DB_PORT"] = "5433"
 os.environ["DB_NAME"] = "overloaderdb_stepd_test"
 os.environ["DB_USER"] = "postgres"
 os.environ["DB_PASSWORD"] = "test"
-os.environ["JWT_SECRET"] = "integration-test-secret-key-1234567890"
-
 from backend.auth_utils import (
     create_access_token,
     decode_and_validate_access_token,
@@ -97,6 +95,7 @@ class MockConnection:
 def test_app_client():
     with patch("psycopg2.pool.SimpleConnectionPool"):
         import backend.main as main_mod
+        main_mod.JWT_SECRET = JWT_SECRET
 
         # Provide mock connection for test queries
         mock_conn = MockConnection(user_id=1, token_version=1)
@@ -134,11 +133,11 @@ def test_stepd_jwt_accessible_on_main_protected_endpoints(test_app_client):
     assert res_logs.status_code == 200, f"/logs failed: {res_logs.text}"
 
 
-def test_legacy_jwt_accessible_on_main_protected_endpoints(test_app_client):
+def test_legacy_jwt_rejected_on_main_protected_endpoints(test_app_client):
     """
-    Verifies backwards compatibility:
-    Legacy tokens without 'aud'/'ver' issued by legacy /auth/google
-    are still accepted by get_current_user.
+    Verifies Option A strict legacy rejection:
+    Legacy tokens without 'aud'/'ver' issued by legacy endpoints
+    are strictly rejected with 401 on main protected endpoints.
     """
     client, mock_conn = test_app_client
 
@@ -151,9 +150,119 @@ def test_legacy_jwt_accessible_on_main_protected_endpoints(test_app_client):
 
     headers = {"Authorization": f"Bearer {legacy_token}"}
 
-    # Test /last-workout accepts legacy token
+    # Test /last-workout rejects legacy token
     res_lw = client.get("/last-workout", headers=headers)
-    assert res_lw.status_code == 200, f"/last-workout rejected legacy token: {res_lw.text}"
+    assert res_lw.status_code == 401, f"Expected 401 for legacy token, got: {res_lw.status_code}"
+
+
+def test_valid_signature_missing_ver_rejected_on_main_apis(test_app_client):
+    """
+    Regression 1: Token with valid signature, aud, iss, sub, type, but NO 'ver'
+    is rejected with 401 on main protected APIs (/last-workout, /logs).
+    """
+    client, mock_conn = test_app_client
+
+    payload_no_ver = {
+        "user_id": 1,
+        "sub": "1",
+        "type": "access",
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "iat": int((datetime.now(timezone.utc)).timestamp()),
+        "exp": int((datetime.now(timezone.utc)).timestamp()) + 3600,
+    }
+    token_no_ver = jwt.encode(payload_no_ver, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    headers = {"Authorization": f"Bearer {token_no_ver}"}
+
+    res_lw = client.get("/last-workout", headers=headers)
+    assert res_lw.status_code == 401
+    assert "revoked" in res_lw.json()["detail"].lower() or "invalid" in res_lw.json()["detail"].lower()
+
+    res_logs = client.get("/logs?month=2026-11", headers=headers)
+    assert res_logs.status_code == 401
+
+
+def test_missing_ver_rejected_on_auth_account_apis(test_app_client):
+    """
+    Regression 2: Token without 'ver' is rejected with 401 on account/settings APIs (/auth/v2/me, /auth/v2/login-methods).
+    """
+    client, mock_conn = test_app_client
+
+    payload_no_ver = {
+        "user_id": 1,
+        "sub": "1",
+        "type": "access",
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "iat": int((datetime.now(timezone.utc)).timestamp()),
+        "exp": int((datetime.now(timezone.utc)).timestamp()) + 3600,
+    }
+    token_no_ver = jwt.encode(payload_no_ver, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    headers = {"Authorization": f"Bearer {token_no_ver}"}
+
+    res_me = client.get("/auth/v2/me", headers=headers)
+    assert res_me.status_code == 401
+
+    res_methods = client.get("/auth/v2/account/methods", headers=headers)
+    assert res_methods.status_code == 401
+
+
+def test_stepd_standard_token_passes_all_apis(test_app_client):
+    """
+    Regression 3: Standard Step D token with valid token_version in DB passes all APIs.
+    """
+    client, mock_conn = test_app_client
+    stepd_token = create_access_token(user_id=1, token_version=1)
+    headers = {"Authorization": f"Bearer {stepd_token}"}
+
+    res_me = client.get("/auth/v2/me", headers=headers)
+    assert res_me.status_code == 200
+
+    res_methods = client.get("/auth/v2/account/methods", headers=headers)
+    assert res_methods.status_code == 200
+
+    res_lw = client.get("/last-workout", headers=headers)
+    assert res_lw.status_code == 200
+
+
+def test_mismatched_token_version_rejected_across_all_apis(test_app_client):
+    """
+    Regression 4: Token with mismatched token_version (e.g. after password change)
+    is rejected with 401 across both main APIs and auth APIs.
+    """
+    client, mock_conn = test_app_client
+    old_token = create_access_token(user_id=1, token_version=1)
+    mock_conn.cursor_mock.token_version = 2  # Active version in DB is now 2
+
+    headers = {"Authorization": f"Bearer {old_token}"}
+
+    res_lw = client.get("/last-workout", headers=headers)
+    assert res_lw.status_code == 401
+    assert "revoked" in res_lw.json()["detail"].lower() or "invalid" in res_lw.json()["detail"].lower()
+
+    res_me = client.get("/auth/v2/me", headers=headers)
+    assert res_me.status_code == 401
+
+
+def test_db_failure_returns_503_fail_closed(test_app_client):
+    """
+    Regression 5: When database has a connection/operational error during token_version verification,
+    endpoints strictly return 503 Service Unavailable (fail-closed).
+    """
+    import psycopg2
+    import backend.main as main_mod
+
+    client, mock_conn = test_app_client
+    valid_token = create_access_token(user_id=1, token_version=1)
+    headers = {"Authorization": f"Bearer {valid_token}"}
+
+    def failing_get_conn():
+        raise psycopg2.OperationalError("Simulated database outage")
+
+    with patch.object(main_mod, "get_conn", side_effect=failing_get_conn):
+        res_lw = client.get("/last-workout", headers=headers)
+        assert res_lw.status_code == 503
+        assert "장애" in res_lw.json()["detail"] or "database" in res_lw.json()["detail"].lower()
 
 
 def test_tampered_audience_rejected_with_401(test_app_client):

@@ -237,7 +237,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     token = credentials.credentials
     try:
         try:
-            from auth_utils import (
+            from backend.auth_utils import (
                 decode_and_validate_access_token,
                 TokenValidationError,
                 TokenExpiredError,
@@ -245,7 +245,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                 TokenVersionMismatchError,
             )
         except ImportError:
-            from backend.auth_utils import (
+            from auth_utils import (
                 decode_and_validate_access_token,
                 TokenValidationError,
                 TokenExpiredError,
@@ -269,13 +269,15 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                         row = cur.fetchone()
                         if row:
                             expected_version = row[0]
+                        else:
+                            raise HTTPException(status_code=401, detail="User not found")
                 finally:
                     release_conn(conn)
 
         payload = decode_and_validate_access_token(
             token=token,
             expected_token_version=expected_version,
-            allow_legacy_no_version=True,
+            allow_legacy_no_version=False,
         )
         return int(payload["user_id"])
     except TokenExpiredError:
