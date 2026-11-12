@@ -88,18 +88,34 @@ export function setupAuthInterceptors() {
     response => {
       // Discard stale response if session changed or user logged out
       if (response.config?._authToken) {
+        const reqSessionId = response.config._authSessionId;
         const currentToken = localStorage.getItem("token");
-        if (
+        const isStaleSession =
           !currentToken ||
-          response.config._authSessionId !== authSessionId ||
-          response.config._authToken !== currentToken
-        ) {
-          return new Promise(() => {});
+          (reqSessionId !== undefined && reqSessionId !== authSessionId);
+
+        if (isStaleSession) {
+          return Promise.reject(
+            new axios.CanceledError("Session changed or user logged out; response discarded.")
+          );
         }
       }
       return response;
     },
     error => {
+      // If error is already a cancellation, propagate it directly
+      if (axios.isCancel(error)) {
+        return Promise.reject(error);
+      }
+
+      // Discard stale error response ONLY if it belongs to a past session
+      const reqSessionId = error.config?._authSessionId;
+      if (reqSessionId !== undefined && reqSessionId !== authSessionId) {
+        return Promise.reject(
+          new axios.CanceledError("Session changed or user logged out; error response discarded.")
+        );
+      }
+
       const status = error.response ? error.response.status : null;
       const url = error.config?.url || "";
       const isLoginRequest = url.includes("/auth/");

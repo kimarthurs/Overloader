@@ -249,4 +249,230 @@ describe('Auth & Logout Flow', () => {
     expect(dataReceived).toBeNull();
     expect(axios.isCancel(errorCaught)).toBe(true);
   });
+
+  test('8. Stale 200 OK response on session change rejects with CanceledError instead of hanging pending forever', async () => {
+    localStorage.setItem('token', 'session1-token');
+    localStorage.setItem('userName', 'User1');
+    initAuthSession('session1-token', 'User1');
+
+    let requestStartedResolve;
+    const requestStartedPromise = new Promise(resolve => {
+      requestStartedResolve = resolve;
+    });
+
+    let resolveSlowRequest;
+    const slowPromise = new Promise(resolve => {
+      resolveSlowRequest = resolve;
+    });
+
+    // Custom adapter simulating slow 200 response without abort signal trigger
+    axios.defaults.adapter = async (config) => {
+      if (config.url?.includes('/slow-200')) {
+        requestStartedResolve();
+        await slowPromise;
+        return { data: { secret: 'session1-data' }, status: 200, statusText: 'OK', headers: {}, config };
+      }
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+
+    let dataReceived = null;
+    let errorCaught = null;
+    let finallyExecuted = false;
+
+    // Send request under session 1
+    axios.get('/slow-200')
+      .then(res => {
+        dataReceived = res.data;
+      })
+      .catch(err => {
+        errorCaught = err;
+      })
+      .finally(() => {
+        finallyExecuted = true;
+      });
+
+    await requestStartedPromise;
+
+    // Session changes to session 2 (e.g. re-login or new user login)
+    initAuthSession('session2-token', 'User2');
+    expect(localStorage.getItem('token')).toBe('session2-token');
+
+    // Server returns 200 OK for session 1's request
+    resolveSlowRequest();
+    await new Promise(r => setTimeout(r, 50));
+
+    // Crucial: Promise must NOT hang. finally must execute, data must be discarded, error is canceled
+    expect(finallyExecuted).toBe(true);
+    expect(dataReceived).toBeNull();
+    expect(axios.isCancel(errorCaught)).toBe(true);
+  });
+
+  test('9. Stale 401 from previous session does NOT log out the current active session', async () => {
+    localStorage.setItem('token', 'session1-token');
+    localStorage.setItem('userName', 'User1');
+    initAuthSession('session1-token', 'User1');
+
+    let requestStartedResolve;
+    const requestStartedPromise = new Promise(resolve => {
+      requestStartedResolve = resolve;
+    });
+
+    let rejectSlow401;
+    const slowPromise = new Promise((_, reject) => {
+      rejectSlow401 = reject;
+    });
+
+    let capturedConfig;
+    axios.defaults.adapter = async (config) => {
+      if (config.url?.includes('/slow-401')) {
+        capturedConfig = config;
+        requestStartedResolve();
+        await slowPromise;
+      }
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+
+    let errorCaught = null;
+    let finallyExecuted = false;
+
+    // Request started under session 1
+    axios.get('/slow-401')
+      .catch(err => {
+        errorCaught = err;
+      })
+      .finally(() => {
+        finallyExecuted = true;
+      });
+
+    await requestStartedPromise;
+
+    // User switches to session 2
+    initAuthSession('session2-token', 'User2');
+    expect(localStorage.getItem('token')).toBe('session2-token');
+
+    // Previous session 1's request fails with 401
+    const err401 = new Error('Request failed with status code 401');
+    err401.config = capturedConfig;
+    err401.response = { status: 401, data: { detail: 'Token expired' } };
+    rejectSlow401(err401);
+    await new Promise(r => setTimeout(r, 50));
+
+    // Current session 2 must remain completely intact
+    expect(finallyExecuted).toBe(true);
+    expect(localStorage.getItem('token')).toBe('session2-token');
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(axios.isCancel(errorCaught)).toBe(true);
+  });
+
+  test('10. 401 with matching current session ID but different token triggers performLogout and is NOT canceled', async () => {
+    localStorage.setItem('token', 'session1-tokenA');
+    localStorage.setItem('userName', 'User1');
+    initAuthSession('session1-tokenA', 'User1');
+
+    let requestStartedResolve;
+    const requestStartedPromise = new Promise(resolve => {
+      requestStartedResolve = resolve;
+    });
+
+    let rejectRequest;
+    const requestPromise = new Promise((_, reject) => {
+      rejectRequest = reject;
+    });
+
+    let capturedConfig;
+    axios.defaults.adapter = async (config) => {
+      if (config.url?.includes('/test-401-token-diff')) {
+        capturedConfig = config;
+        requestStartedResolve();
+        await requestPromise;
+      }
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+
+    let errorCaught = null;
+    let finallyExecuted = false;
+
+    // Send request under current session with tokenA
+    axios.get('/test-401-token-diff')
+      .catch(err => {
+        errorCaught = err;
+      })
+      .finally(() => {
+        finallyExecuted = true;
+      });
+
+    await requestStartedPromise;
+
+    // Simulate token string update in localStorage WITHOUT session increment (authSessionId remains unchanged)
+    localStorage.setItem('token', 'session1-tokenB');
+
+    // 401 arrives for the request
+    const err401 = new Error('Request failed with status code 401');
+    err401.config = capturedConfig;
+    err401.response = { status: 401, data: { detail: 'Token revoked' } };
+    rejectRequest(err401);
+    await new Promise(r => setTimeout(r, 50));
+
+    // Because session ID matched, it is NOT canceled as a stale request; it triggers regular session expiry
+    expect(finallyExecuted).toBe(true);
+    expect(axios.isCancel(errorCaught)).toBe(false);
+    expect(alertSpy).toHaveBeenCalledWith('로그인이 만료되었어요. 다시 로그인해 주세요.');
+    expect(localStorage.getItem('token')).toBeNull();
+  });
+
+  test('11. Late-arriving 401 after explicit logout does NOT trigger duplicate logout or alert', async () => {
+    localStorage.setItem('token', 'session1-token');
+    localStorage.setItem('userName', 'User1');
+    initAuthSession('session1-token', 'User1');
+
+    let requestStartedResolve;
+    const requestStartedPromise = new Promise(resolve => {
+      requestStartedResolve = resolve;
+    });
+
+    let rejectSlow401;
+    const slowPromise = new Promise((_, reject) => {
+      rejectSlow401 = reject;
+    });
+
+    let capturedConfig;
+    axios.defaults.adapter = async (config) => {
+      if (config.url?.includes('/slow-after-logout')) {
+        capturedConfig = config;
+        requestStartedResolve();
+        await slowPromise;
+      }
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+
+    let errorCaught = null;
+    let finallyExecuted = false;
+
+    axios.get('/slow-after-logout')
+      .catch(err => {
+        errorCaught = err;
+      })
+      .finally(() => {
+        finallyExecuted = true;
+      });
+
+    await requestStartedPromise;
+
+    // User explicitly logs out (expired: false, so alertSpy is NOT called)
+    performLogout({ expired: false });
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    // Now late-arriving 401 arrives from the pre-logout session
+    const err401 = new Error('Request failed with status code 401');
+    err401.config = capturedConfig;
+    err401.response = { status: 401, data: { detail: 'Token expired' } };
+    rejectSlow401(err401);
+    await new Promise(r => setTimeout(r, 50));
+
+    // Must be rejected cleanly as CanceledError without duplicate alert or re-logout
+    expect(finallyExecuted).toBe(true);
+    expect(axios.isCancel(errorCaught)).toBe(true);
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
 });

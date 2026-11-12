@@ -629,7 +629,27 @@ un_step_d_local_tests.ps1 -TestOnly)와, 이번 단위/통합 테스트에서 �
       - 백엔드 인증·통합 테스트 91건 전부 통과, 실패·스킵 0건 (91 passed, 0 failed, 0 skipped).
       - 프론트엔드 테스트 및 빌드 정상 유지.
 
-21. **향후 잔여 작업 (Next Steps)**:
+21. **`frontend/src/auth.js` 세션 불일치 처리 개선 및 영구 pending Promise 제거 (2026-11-12)**:
+    * **배경 및 원인 분석**:
+      - 기존 `auth.js`는 세션 변경이나 로그아웃 후 뒤늦게 도착한 200 OK 응답에 대해 `return new Promise(() => {})`를 반환하여 상태 오염을 방어했으나, resolve/reject가 평생 호출되지 않아 호출부의 `finally` 블록이 실행되지 않는 문제가 존재함.
+      - 이로 인해 화면 로딩 스피너 영구 회전, 버튼 잠금 미해제, 브라우저 메모리 누수 위험이 유발됨.
+      - 또한 에러 인터셉터에 세션 ID 대조 가드가 누락되어 있어, 이전 세션의 지연된 401 에러가 새로 로그인된 활성 세션을 강제 로그아웃시키는 결함이 존재함.
+    * **구현 개선 내역**:
+      - `frontend/src/auth.js` 응답 인터셉터 최소 개선:
+        1. **성공 인터셉터**: 세션 ID 불일치(`reqSessionId !== authSessionId`) 또는 로그아웃(`!currentToken`) 상태에서 도착한 지연 200 OK 응답에 대해 `Promise.reject(new axios.CanceledError("Session changed or user logged out; response discarded."))`로 즉시 거절 반환. 호출부 `finally`가 정상 실행되어 로딩/제출 상태 즉시 해제.
+        2. **에러 인터셉터**: 구 세션 요청(`reqSessionId !== authSessionId`)의 지연된 401 에러는 `performLogout`을 호출하지 않고 `new axios.CanceledError(...)`로 조용히 reject하여 신규 활성 세션을 완벽히 보호.
+        3. **현재 세션 401 보장**: 현재 세션 ID와 일치하는 요청은 토큰 문자열 차이와 무관하게 취소 처리하지 않고 기존 `performLogout({ expired: true })` 및 만료 알림 흐름을 100% 정상 유지.
+        4. **재시도 배제**: 계정 간 데이터 오염을 방지하기 위해 구 세션 요청의 새 토큰 자동 재시도는 적용하지 않음.
+    * **검증 현황**:
+      - 프론트엔드 테스트: **11 passed, 0 failed** (`react-scripts test`, 세션 불일치 CanceledError 거절, 구 세션 401 신규 세션 격리, 현재 세션 401 만료 흐름 유지, 로그아웃 후 지연 401 정리 등 총 4개 엣지 케이스 회귀 검증 완료).
+      - 프론트엔드 프로덕션 빌드: `npm run build` 컴파일 성공 (`Compiled successfully`).
+      - 백엔드 테스트: **91 passed, 0 failed, 0 skipped** 유지.
+      - *(운영 환경 상태: 본 변경 및 Step D 스키마는 로컬 환경 검증 완료 상태이며, 실제 운영 DB 및 프로덕션 서버에는 아직 미적용 상태 유지)*
+      - *(개인 이메일·아이디·토큰·비밀값 등 일체 미포함)*
+
+22. **향후 잔여 작업 (Next Steps)**:
     - 2개 이상 연결된 계정에서 마지막 수단 도움말이 숨겨지는지 및 네이버/비밀번호 단독 계정 UI 재확인.
-    - `auth.js`의 세션 불일치 시 영구 대기 Promise 정책 검토.
-    - 운영 Azure DB Step D 스키마 마이그레이션 및 프로덕션 환경변수 배포 계획 수립.
+    - 운영 DB 마이그레이션 직전 최신 pg_dump 백업 생성 및 무결성 확인.
+    - 운영 DB에 Step D 마이그레이션(`step_d_production.sql`) 적용 및 사후 검증.
+    - 운영 백엔드(`api.overloader.cloud`) 및 프론트엔드(Vercel) 배포.
+    - 배포 후 첫 30분 핵심 스모크 테스트 수행.
