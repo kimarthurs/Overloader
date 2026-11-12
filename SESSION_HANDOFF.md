@@ -536,3 +536,64 @@ un_step_d_local_tests.ps1 -TestOnly)와, 이번 단위/통합 테스트에서 �
         * 소셜 이름 변경 시에도 기존 앱 닉네임 보존 검증 추가.
       - 프론트엔드 테스트: **7 passed, 0 failed** (`react-scripts test`).
       - 프론트엔드 빌드: `npm run build` 컴파일 성공 (`Compiled successfully`).
+      - 사용자 브라우저 수동 확인 완료 (2026-11-12):
+        * 네이버 로그인: 공통 닉네임 / @아이디 정상 표시 확인.
+        * 네이버 로그인 후 새로고침: 동일 표시 유지 확인.
+        * 로그아웃 후 아이디/비밀번호 로그인: 동일 표시 확인.
+        * 비밀번호 로그인 후 새로고침: 동일 표시 유지 확인.
+        * 설정 화면과 사이드바의 닉네임 및 아이디 일치 확인.
+        * 기존 운동 기록 정상 표시 확인.
+        * (API별 HTTP 상태 코드는 브라우저 UI 직접 검증 범위에 한정하여 추정치 없이 미기록)
+
+18. **비밀번호 변경 브라우저 수동 검증 완료 (2026-11-12)**:
+    * **사용자 브라우저 수동 확인 내역**:
+      - 비밀번호 변경 성공 안내 문구 표시 확인.
+      - 변경 직후 로그아웃되지 않고 현재 세션 정상 유지 확인.
+      - 사이드바 닉네임 / @아이디 및 기존 운동 기록 정상 유지 확인.
+      - 로그아웃 후 이전(변경 전) 비밀번호 로그인 거부 확인.
+      - 새 비밀번호 로그인 성공 확인.
+      - 새 비밀번호 재로그인 후에도 동일 프로필 및 기존 운동 기록 정상 유지 확인.
+      - (사용자가 직접 확인한 화면 결과만 기록하며, API 상태 코드나 타 세션 무효화 여부 등은 추정치 없이 미기록)
+
+19. **Google 소셜 계정 연동 성공 확인 및 연결 충돌/해제 재인증 티켓 오류 수정 (2026-11-12)**:
+    * **사용자 브라우저 수동 확인 내역 (정상 동작)**:
+      - 네이버 및 아이디/비밀번호 로그인과 새로고침 시 공통 프로필(닉네임 / @아이디) 일관성 확인 완료.
+      - 비밀번호 변경 성공 후 로그아웃 없이 현재 세션 및 기존 운동 기록 유지 확인 완료.
+      - 로그아웃 후 이전 비밀번호 로그인 거부, 새 비밀번호 로그인 성공 확인 완료.
+      - 신규 Google 계정 연결 성공 확인 완료.
+      - 연결한 Google로 로그인했을 때 기존 닉네임·아이디·운동 기록 유지 확인 완료.
+      - 설정 화면에 로그인 수단 3개(Google + 네이버 + 비밀번호) 표시 및 새로고침(F5) 후 유지 확인 완료.
+      - 로컬 DB 비밀번호 인증 실패 후 백엔드 복구 및 앱 정상 동작 확인 완료.
+    * **브라우저 확인 범위 미확정 항목 (코드 및 모의 테스트 통과)**:
+      - Google 실제 연동 해제 성공 동작: 백엔드/프론트엔드 코드 수정 및 단위 테스트는 통과했으나, 실제 브라우저 해제 동작은 미확정(미수행).
+      - 기존 계정 연결 충돌 배너: `already_linked_to_other_user` 처리 배너 신설 완료 및 테스트 통과했으나, 실제 브라우저 화면 표시 재확인은 미확정.
+      - ※ 현재 계정 연동 상태(Google+Naver+Password 총 3개)는 이전 해제 요청이 백엔드 토큰 검증 단계에서 400 거부되어 DB 삭제 쿼리가 실행되지 않았다는 실패 경로 근거의 추론 및 사용자 화면 확인에 기반함.
+    * **사용자 발견 오류 1 (기존 Google 계정 연결 충돌 안내 누락)**:
+      - 현상: 별도 계정으로 기사용 중이던 Google 계정 연동 시도 시, 충돌 차단은 정상 수행되었으나 화면에 오류 안내 문구가 노출되지 않고 증발함 (충돌 차단 완료가 아닌 "연결 미반영 및 안내 누락"으로 기록).
+      - 원인: OAuth 콜백 후 프론트엔드로 `?tab=settings&error=already_linked_to_other_user` 쿼리가 전달되었으나, `AccountManagementCard.jsx`가 해당 오류를 모달 내부 에러 상태(`modalError`)에만 할당함. 당시 화면에 열려 있는 모달이 없어 사용자에게 오류가 보이지 않은 채 `replaceState`로 URL 쿼리만 소거됨.
+      - 개선: `AccountManagementCard.jsx`에 카드 전역 에러 배너(`cardError`)를 신설하여 `{cardError && <div style={styles.alertError}>⚠️ {cardError}</div>}`로 모달 외부에서도 즉시 표시되도록 개선. `already_linked_to_other_user`에 대해 "해당 소셜 계정은 이미 다른 사용자의 계정에 연동되어 있습니다. 다른 소셜 계정을 연동하거나 기존 계정으로 로그인해 주세요."라는 명확한 한국어 안내 제공. `App.js`에서도 에러 파라미터 수신 시 `tab=settings`로 안정 유지되도록 가드 보강.
+    * **사용자 발견 오류 2 (소셜 연동 해제 시 재인증 티켓 target_provider 불일치 오류)**:
+      - 현상: Google 연동 해제 시 현재 비밀번호를 입력하고 진행했을 때 `유효하지 않은 재인증 티켓입니다: Reauth ticket target provider mismatch: ticket is for 'None', expected 'google'` 오류 발생하며 실패 (취소 확인이 아닌 "해제 요청 중 재인증 티켓 불일치로 실패"로 기록).
+      - 원인: 프론트엔드 `AccountManagementCard.jsx`에서 비밀번호 재인증 호출(`POST /auth/v2/reauth/password`) 시 `target_provider`를 전달하지 않았고, 백엔드 `ReauthPasswordRequest` 모델 및 `reauth_password` 엔드포인트도 `target_provider` 파라미터를 수신·저장하지 않아 `target_provider=None`으로 티켓이 발급됨. 이후 `POST /auth/v2/account/social/unlink`에서 `expected_target_provider='google'`과 대조 시 불일치로 거부됨.
+      - 개선:
+        1. 백엔드 `ReauthPasswordRequest`에 `target_provider: Optional[str] = None` 추가.
+        2. `reauth_password`에서 `purpose == "social_unlink"`일 때 `target_provider` 필수 검증 (`google` 또는 `naver`), 티켓 클레임 및 DB 일회용 토큰 저장소에 `target_provider` 안전 바인딩.
+        3. `unlink_social`에서 `TokenValidationError` 발생 시 내부 영문 예외 대신 "해제 대상 소셜 계정과 일치하지 않는 재인증 티켓입니다." 등 직관적인 한국어 에러 메시지로 매핑.
+        4. 프론트엔드 `AccountManagementCard.jsx`의 `executeUnlink`에서 `reauth/password` 호출 시 `target_provider: prov`를 정확히 전송.
+        5. 실패 시 트랜잭션 롤백으로 인해 실제 DB `social_accounts` 데이터는 일체 손상·삭제되지 않고 안전하게 보존됨을 확인.
+    * **로컬 DB 연결 실패(UnicodeDecodeError) 분석 및 main.py 보강**:
+      - 현상: 백엔드 시작 시 `backend/main.py:199 db_pool = pool.SimpleConnectionPool(...)`에서 `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xb8 in position 57: invalid start byte` 발생하며 중단.
+      - 원인 분석: PostgreSQL 서버 로그(`postgresql-2026-11-08_000000.log` 10:12:57) 확인 결과 실제 원인은 `치명적오류: 사용자 "postgres"의 password 인증을 실패했습니다`였음. PostgreSQL 서버가 윈도우 한국어 로케일(CP949)로 오류를 전송했으나 `psycopg2`가 UTF-8로 디코딩을 시도하면서 발생한 파생 오류임.
+      - 개선: `backend/main.py`에서 `UnicodeDecodeError` 발생 시 특정 원인(비밀번호 등)으로 단정하지 않고, 일반 연결 실패(비밀번호 불일치, DB 미존재, 포트 접근 거부 등) 가능성을 명시하며 안전한 진단 정보(호스트, 포트, DB명, 사용자 - 비밀값 일체 없음)와 함께 서버 로그 확인을 안내하도록 예외 처리를 보강함. 인증 실패를 은폐하거나 운영 DB로 폴백하지 않음.
+    * **검증 현황**:
+      - 백엔드 단위/통합 테스트: **86 passed, 8 skipped, 0 failed** (`pytest`, 신규 5개 단위 테스트 추가. PostgreSQL 동시성 8건은 최신 코드에서 미실행 상태 유지).
+      - 프론트엔드 테스트: **7 passed, 0 failed** (`react-scripts test`).
+      - 프론트엔드 빌드: `npm run build` 컴파일 성공 (`Compiled successfully`).
+      - 제약 준수: 원격 push / merge / 운영 배포 미실행, 사용자 정상 연결 계정 임의 변경 없음.
+
+20. **향후 잔여 작업 (Next Steps)**:
+    - 실제 소셜 연동 해제 및 계정 연결 충돌 배너 브라우저 수동 검증.
+    - 마지막 로그인 수단 보호 브라우저 및 API 검증.
+    - 최신 코드 기준 로컬 PostgreSQL 컨테이너 동시성 테스트 suite (8건) 재실행.
+    - 레거시 JWT 허용 정책 sunset 검토 및 `auth.js`의 세션 불일치 시 영구 대기 Promise 정책 검토.
+    - 운영 Azure DB Step D 스키마 마이그레이션 및 프로덕션 환경변수 배포 계획 수립.

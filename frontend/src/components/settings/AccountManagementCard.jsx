@@ -24,6 +24,7 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
   const [showPwd, setShowPwd] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [modalError, setModalError] = useState("");
+  const [cardError, setCardError] = useState("");
 
   // ── 로그인 수단 요약 조회 ──
   const fetchMethods = useCallback(async () => {
@@ -58,15 +59,16 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
         setSuccessMsg(`${provLabel} 계정 연동이 완료되었습니다.`);
         window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");
       } else if (errParam) {
+        let msg = `인증 오류: ${errParam}`;
         if (errParam === "already_linked_to_other_user") {
-          setModalError("해당 소셜 계정은 이미 다른 사용자의 계정에 연동되어 있습니다.");
+          msg = "해당 소셜 계정은 이미 다른 사용자의 계정에 연동되어 있습니다. 다른 소셜 계정을 연동하거나 기존 계정으로 로그인해 주세요.";
         } else if (errParam === "reauth_user_mismatch") {
-          setModalError("현재 로그인된 계정에 연동된 소셜 계정과 일치하지 않습니다.");
+          msg = "현재 로그인된 계정에 연동된 소셜 계정과 일치하지 않습니다.";
         } else if (errParam === "google_oauth_pending") {
-          setModalError("구글 소셜 계정 연동은 준비 중입니다. 현재는 네이버 소셜 계정 연동을 지원합니다.");
-        } else {
-          setModalError(`인증 오류: ${errParam}`);
+          msg = "구글 소셜 계정 연동은 준비 중입니다. 현재는 네이버 소셜 계정 연동을 지원합니다.";
         }
+        setCardError(msg);
+        setTimeout(() => setCardError(""), 6000);
         window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");
       }
     } catch (e) {
@@ -231,11 +233,12 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
         setSuccessMsg("아이디/비밀번호 연결이 해제되었습니다.");
       } else if (unlinkConfirmTarget.type === "social") {
         const prov = unlinkConfirmTarget.provider;
-        // 소셜 연동 해제를 위해 비밀번호(있다면)로 재인증
+        // 소셜 연동 해제를 위해 비밀번호(있다면)로 재인증 (대상 제공자 명시)
         if (methods?.has_password) {
           const reauthRes = await axios.post(`${API}/auth/v2/reauth/password`, {
             password: currentPassword,
-            purpose: "social_unlink"
+            purpose: "social_unlink",
+            target_provider: prov
           });
           const ticket = reauthRes.data.reauth_ticket;
 
@@ -243,7 +246,7 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
             provider: prov,
             reauth_ticket: ticket
           });
-          setSuccessMsg(`${prov} 계정 연동이 해제되었습니다.`);
+          setSuccessMsg(`${prov === "naver" ? "네이버" : prov === "google" ? "Google" : prov} 계정 연동이 해제되었습니다.`);
         } else {
           // 비밀번호가 없는데 다른 소셜이 있는 경우
           alert("소셜 연동 해제를 위해 본인 인증이 필요합니다.");
@@ -322,6 +325,19 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
       {successMsg && (
         <div style={styles.alertSuccess}>
           ✅ {successMsg}
+        </div>
+      )}
+      {cardError && (
+        <div style={{ ...styles.alertError, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>⚠️ {cardError}</span>
+          <button
+            type="button"
+            onClick={() => setCardError("")}
+            style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontWeight: "bold", padding: "0 4px", fontSize: 13 }}
+            title="닫기"
+          >
+            ✕
+          </button>
         </div>
       )}
 

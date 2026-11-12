@@ -196,7 +196,16 @@ JWT_ALGORITHM = "HS256"
 
 security = HTTPBearer()
 
-db_pool = pool.SimpleConnectionPool(minconn=1, maxconn=10, **DB_CONFIG)
+try:
+    db_pool = pool.SimpleConnectionPool(minconn=1, maxconn=10, **DB_CONFIG)
+except UnicodeDecodeError as e:
+    # Windows 환경에서 PostgreSQL 서버의 비-UTF8(예: CP949 한국어) 오류 응답 수신 시 psycopg2 디코딩 실패 가능
+    logger.error("DB 연결 오류 메시지 디코딩 실패 (UnicodeDecodeError): %s", e)
+    raise RuntimeError(
+        "PostgreSQL 연결 시도 중 시스템 로케일 오류 응답 디코딩 실패 (UnicodeDecodeError). "
+        "비밀번호 불일치, DB 미존재, 포트 접근 거부 등 서버 연결 실패 사유를 PostgreSQL 서버 로그에서 확인하세요. "
+        f"(대상: {DB_CONFIG.get('host')}:{DB_CONFIG.get('port')} / {DB_CONFIG.get('database')}, user={DB_CONFIG.get('user')})"
+    ) from e
 
 def get_conn():
     return db_pool.getconn()

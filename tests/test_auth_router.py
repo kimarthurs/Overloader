@@ -1466,5 +1466,207 @@ class TestAuthenticatedOAuthUrlEndpoint:
             update_name_queries = [q for q, _ in executed if "UPDATE users SET" in q and "name" in q]
             assert len(update_name_queries) == 0
 
+    def test_reauth_password_social_unlink_with_target_provider(self):
+        user_id = 77
+        token = create_access_token(user_id=user_id, token_version=1, session_id="sess_abc")
+        current_pwd = "MyCurrentSecret123!"
+        hashed = hash_password(current_pwd)
+
+        class ReauthCursor(FakeCursor):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+            def fetchone(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return (77, "Arthur Kim", 1)  # get_current_user
+                return (hashed,)  # password_credentials query
+
+        fake_conn = FakeConnection(ReauthCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        res = client.post(
+            "/auth/v2/reauth/password",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "password": current_pwd,
+                "purpose": REAUTH_PURPOSE_SOCIAL_UNLINK,
+                "target_provider": "google",
+            }
+        )
+        assert res.status_code == 200
+        ticket = res.json()["reauth_ticket"]
+
+        # Verify decoded ticket has target_provider == 'google'
+        from backend.auth_utils import decode_and_validate_reauth_ticket
+        claims = decode_and_validate_reauth_ticket(
+            ticket=ticket,
+            expected_user_id=user_id,
+            expected_purpose=REAUTH_PURPOSE_SOCIAL_UNLINK,
+            expected_session_id="sess_abc",
+            expected_token_version=1,
+            expected_target_provider="google",
+        )
+        assert claims["target_provider"] == "google"
+
+    def test_reauth_password_social_unlink_missing_target_provider_rejected(self):
+        user_id = 77
+        token = create_access_token(user_id=user_id, token_version=1, session_id="sess_abc")
+        current_pwd = "MyCurrentSecret123!"
+        hashed = hash_password(current_pwd)
+
+        class ReauthCursor(FakeCursor):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+            def fetchone(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return (77, "Arthur Kim", 1)
+                return (hashed,)
+
+        fake_conn = FakeConnection(ReauthCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        res = client.post(
+            "/auth/v2/reauth/password",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "password": current_pwd,
+                "purpose": REAUTH_PURPOSE_SOCIAL_UNLINK,
+                # missing target_provider
+            }
+        )
+        assert res.status_code == 400
+        assert "소셜 연동 해제를 위해 유효한 대상 제공자" in res.json()["detail"]
+
+    def test_unlink_social_with_target_provider_mismatch_rejected(self):
+        user_id = 77
+        session_id = "sess_abc"
+        token = create_access_token(user_id=user_id, token_version=1, session_id=session_id)
+        # Ticket issued specifically for 'google'
+        ticket, _ = create_reauth_ticket(
+            user_id=user_id,
+            purpose=REAUTH_PURPOSE_SOCIAL_UNLINK,
+            session_id=session_id,
+            token_version=1,
+            target_provider="google",
+        )
+
+        class DummyCursor(FakeCursor):
+            def fetchone(self):
+                return (77, "Arthur Kim", 1)
+
+        fake_conn = FakeConnection(DummyCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        # Attempt to unlink 'naver' using a 'google' ticket
+        res = client.post(
+            "/auth/v2/account/social/unlink",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "provider": "naver",
+                "reauth_ticket": ticket,
+            }
+        )
+        assert res.status_code == 400
+        assert res.json()["detail"] == "해제 대상 소셜 계정과 일치하지 않는 재인증 티켓입니다."
+
+    def test_unlink_social_with_purpose_mismatch_rejected(self):
+        user_id = 77
+        session_id = "sess_abc"
+        token = create_access_token(user_id=user_id, token_version=1, session_id=session_id)
+        # Ticket issued for password_change instead of social_unlink
+        ticket, _ = create_reauth_ticket(
+            user_id=user_id,
+            purpose=REAUTH_PURPOSE_PASSWORD_CHANGE,
+            session_id=session_id,
+            token_version=1,
+        )
+
+        class DummyCursor(FakeCursor):
+            def fetchone(self):
+                return (77, "Arthur Kim", 1)
+
+        fake_conn = FakeConnection(DummyCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        res = client.post(
+            "/auth/v2/account/social/unlink",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "provider": "google",
+                "reauth_ticket": ticket,
+            }
+        )
+        assert res.status_code == 400
+        assert res.json()["detail"] == "소셜 연동 해제를 위한 재인증 티켓이 아닙니다."
+
+    def test_unlink_social_success_consumes_ticket(self):
+        user_id = 77
+        session_id = "sess_abc"
+        token = create_access_token(user_id=user_id, token_version=1, session_id=session_id)
+        ticket, jti = create_reauth_ticket(
+            user_id=user_id,
+            purpose=REAUTH_PURPOSE_SOCIAL_UNLINK,
+            session_id=session_id,
+            token_version=1,
+            target_provider="google",
+        )
+
+        class SuccessUnlinkCursor(FakeCursor):
+            def __init__(self):
+                super().__init__()
+                self.step = 0
+            def fetchone(self):
+                self.step += 1
+                if self.step == 1:
+                    return (77, "Arthur Kim", 1)  # get_current_user
+                elif self.step == 2:
+                    return (1,)  # lock user row
+                elif self.step == 3:
+                    return (1,)  # social_accounts exists
+                elif self.step == 4:
+                    return (2,)  # social_count = 2 (google + naver)
+                elif self.step == 5:
+                    return (1,)  # pwd_count = 1 (total = 3 > 1)
+                elif self.step == 6:
+                    # consume_reauth_ticket_record:
+                    # (id, user_id, session_id, purpose, target_provider, token_version, consumed_at, expires_at)
+                    exp = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    return (201, 77, "sess_abc", "social_unlink", "google", 1, None, exp)
+                return None
+
+        fake_conn = FakeConnection(SuccessUnlinkCursor())
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        res = client.post(
+            "/auth/v2/account/social/unlink",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "provider": "google",
+                "reauth_ticket": ticket,
+            }
+        )
+        assert res.status_code == 200
+        assert res.json()["success"] is True
+        assert fake_conn.committed is True
+
+
 
 

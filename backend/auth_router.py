@@ -185,6 +185,7 @@ class LoginRequest(BaseModel):
 class ReauthPasswordRequest(BaseModel):
     password: str
     purpose: str
+    target_provider: Optional[str] = None
 
 
 class PasswordAddRequest(BaseModel):
@@ -548,12 +549,21 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                 detail="현재 비밀번호가 일치하지 않습니다."
             )
 
+        target_prov = req.target_provider.strip().lower() if req.target_provider else None
+        if req.purpose == REAUTH_PURPOSE_SOCIAL_UNLINK:
+            if not target_prov or target_prov not in ("google", "naver"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="소셜 연동 해제를 위해 유효한 대상 제공자(target_provider: 'google' 또는 'naver')가 필요합니다."
+                )
+
         # Generate ticket & record in DB single-use store
         ticket, jti = create_reauth_ticket(
             user_id=user_id,
             purpose=req.purpose,
             session_id=session_id,
             token_version=token_ver,
+            target_provider=target_prov,
             expires_in_minutes=5,
         )
 
@@ -566,6 +576,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                     session_id=session_id,
                     purpose=req.purpose,
                     token_version=token_ver,
+                    target_provider=target_prov,
                     ttl_minutes=5,
                 )
                 conn.commit()
@@ -619,7 +630,16 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                 expected_token_version=token_ver,
             )
         except TokenValidationError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"유효하지 않은 재인증 티켓입니다: {e}")
+            err_str = str(e)
+            if "purpose mismatch" in err_str:
+                korean_detail = "아이디/비밀번호 등록을 위한 재인증 티켓이 아닙니다."
+            elif "session binding mismatch" in err_str:
+                korean_detail = "세션 정보가 일치하지 않는 재인증 티켓입니다."
+            elif "token_version" in err_str or "expired" in err_str.lower():
+                korean_detail = "만료되었거나 이미 사용된 재인증 티켓입니다."
+            else:
+                korean_detail = "유효하지 않은 본인 재인증 티켓입니다. 다시 인증해 주세요."
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=korean_detail)
 
         jti = ticket_claims["jti"]
         hashed_password = await hash_password_async(req.password)
@@ -682,7 +702,16 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                 expected_token_version=token_ver,
             )
         except TokenValidationError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"유효하지 않은 재인증 티켓입니다: {e}")
+            err_str = str(e)
+            if "purpose mismatch" in err_str:
+                korean_detail = "비밀번호 변경을 위한 재인증 티켓이 아닙니다."
+            elif "session binding mismatch" in err_str:
+                korean_detail = "세션 정보가 일치하지 않는 재인증 티켓입니다."
+            elif "token_version" in err_str or "expired" in err_str.lower():
+                korean_detail = "만료되었거나 이미 사용된 재인증 티켓입니다."
+            else:
+                korean_detail = "유효하지 않은 본인 재인증 티켓입니다. 다시 인증해 주세요."
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=korean_detail)
 
         jti = ticket_claims["jti"]
         hashed_password = await hash_password_async(req.new_password)
@@ -755,7 +784,18 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                 expected_target_provider=provider,
             )
         except TokenValidationError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"유효하지 않은 재인증 티켓입니다: {e}")
+            err_str = str(e)
+            if "target provider mismatch" in err_str:
+                korean_detail = "해제 대상 소셜 계정과 일치하지 않는 재인증 티켓입니다."
+            elif "purpose mismatch" in err_str:
+                korean_detail = "소셜 연동 해제를 위한 재인증 티켓이 아닙니다."
+            elif "session binding mismatch" in err_str:
+                korean_detail = "세션 정보가 일치하지 않는 재인증 티켓입니다."
+            elif "token_version" in err_str or "expired" in err_str.lower():
+                korean_detail = "만료되었거나 이미 사용된 재인증 티켓입니다."
+            else:
+                korean_detail = "유효하지 않은 본인 재인증 티켓입니다. 다시 인증해 주세요."
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=korean_detail)
 
         jti = ticket_claims["jti"]
 
@@ -810,7 +850,16 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                 expected_token_version=token_ver,
             )
         except TokenValidationError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"유효하지 않은 재인증 티켓입니다: {e}")
+            err_str = str(e)
+            if "purpose mismatch" in err_str:
+                korean_detail = "아이디/비밀번호 해제를 위한 재인증 티켓이 아닙니다."
+            elif "session binding mismatch" in err_str:
+                korean_detail = "세션 정보가 일치하지 않는 재인증 티켓입니다."
+            elif "token_version" in err_str or "expired" in err_str.lower():
+                korean_detail = "만료되었거나 이미 사용된 재인증 티켓입니다."
+            else:
+                korean_detail = "유효하지 않은 본인 재인증 티켓입니다. 다시 인증해 주세요."
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=korean_detail)
 
         jti = ticket_claims["jti"]
 

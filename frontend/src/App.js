@@ -65,7 +65,8 @@ export default function App() {
       const purposeParam = params.get("purpose");
       const ticketParam = params.get("ticket");
       const statusParam = params.get("status");
-      if (tabParam === "settings" || purposeParam === "password_add" || (ticketParam && purposeParam !== "password_reset") || statusParam === "link_success") {
+      const errParam = params.get("error");
+      if (tabParam === "settings" || purposeParam === "password_add" || (ticketParam && purposeParam !== "password_reset") || statusParam === "link_success" || (errParam && (!tabParam || tabParam === "settings"))) {
         return "settings";
       }
       return tabParam || "home";
