@@ -16,8 +16,9 @@ Features:
 
 import time
 import os
+import re
 import secrets
-from urllib.parse import urlparse, urlencode
+from urllib.parse import urlparse, urlencode, quote_plus
 from contextlib import contextmanager
 from typing import Optional, Dict, Any, List
 
@@ -1262,7 +1263,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
     @router.get("/oauth/{provider}/callback")
     async def oauth_callback(
         provider: str,
-        state: str = Query(...),
+        state: Optional[str] = Query(None),
         code: Optional[str] = Query(None),
         redirect_uri: Optional[str] = Query(None),
         error: Optional[str] = Query(None),
@@ -1297,8 +1298,14 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
         sep = "&" if "?" in target_redirect else "?"
 
         if error:
-            err_msg = error_description or error
-            return RedirectResponse(url=f"{target_redirect}{sep}error={err_msg}")
+            raw_err = error_description or error
+            safe_err = quote_plus(re.sub(r"[^\w\-_.: ]", "", str(raw_err)[:100]).strip() or "oauth_error")
+            return RedirectResponse(url=f"{target_redirect}{sep}error={safe_err}")
+
+        if not state:
+            raw_err = error_description or error or "missing_state"
+            safe_err = quote_plus(re.sub(r"[^\w\-_.: ]", "", str(raw_err)[:100]).strip() or "missing_state")
+            return RedirectResponse(url=f"{target_redirect}{sep}error={safe_err}")
 
         from datetime import datetime, timezone
 

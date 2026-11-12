@@ -18,6 +18,18 @@ function getOrCreateSessionId() {
   return sid;
 }
 
+// 소셜 로그인 관련 안전한 에러 매핑 (화이트리스트 외 입력은 안전한 기본 문구로 처리)
+const OAUTH_ERROR_MESSAGES = {
+  missing_state: "인증 상태가 올바르지 않아요. 다시 로그인해 주세요.",
+  access_denied: "소셜 로그인이 취소되었어요.",
+  state_expired: "로그인 요청이 만료되었어요. 다시 시도해 주세요.",
+  state_already_consumed: "이미 처리된 로그인 요청이에요. 다시 시도해 주세요.",
+  state_not_found: "인증 요청을 찾을 수 없어요. 다시 시도해 주세요.",
+  provider_mismatch: "인증 제공자 정보가 올바르지 않아요.",
+  missing_auth_code: "소셜 인증 정보가 올바르지 않아요. 다시 시도해 주세요.",
+  google_oauth_pending: "구글 소셜 로그인은 연동 준비 중입니다. 현재는 네이버 로그인 및 일반 아이디/비밀번호 로그인을 지원합니다.",
+};
+
 export default function AuthScreen({ onLogin }) {
   const [mode, setMode] = useState("login"); // "login" | "register" | "reset"
   const [username, setUsername] = useState("");
@@ -91,11 +103,8 @@ export default function AuthScreen({ onLogin }) {
     }
 
     if (errorParam) {
-      if (errorParam === "google_oauth_pending") {
-        setErrorMsg("구글 소셜 로그인은 연동 준비 중입니다. 현재는 네이버 로그인 및 일반 아이디/비밀번호 로그인을 지원합니다.");
-      } else {
-        setErrorMsg(`인증 중 오류가 발생했습니다: ${errorParam}`);
-      }
+      const msg = OAUTH_ERROR_MESSAGES[errorParam] || "소셜 로그인에 실패했어요. 다시 시도해 주세요.";
+      setErrorMsg(msg);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [sessionId, onLogin]);

@@ -5,6 +5,20 @@ import { UserIcon, LogoutIcon, EyeIcon, EyeOffIcon } from "../common/Icons";
 const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:8000";
 const SPECIAL_CHAR_REGEX = /[!"#$%&'()*+,-./:;<=>?@[\\\]^_`{|}~]/;
 
+// 소셜 계정 연동 및 재인증 관련 안전한 에러 매핑
+const OAUTH_LINK_ERROR_MESSAGES = {
+  missing_state: "인증 상태가 올바르지 않아요. 다시 시도해 주세요.",
+  access_denied: "소셜 계정 인증이 취소되었어요.",
+  state_expired: "인증 요청이 만료되었어요. 다시 시도해 주세요.",
+  state_already_consumed: "이미 처리된 인증 요청이에요. 다시 시도해 주세요.",
+  state_not_found: "인증 요청을 찾을 수 없어요. 다시 시도해 주세요.",
+  provider_mismatch: "인증 제공자 정보가 올바르지 않아요.",
+  missing_auth_code: "소셜 인증 정보가 올바르지 않아요. 다시 시도해 주세요.",
+  already_linked_to_other_user: "해당 소셜 계정은 이미 다른 사용자의 계정에 연동되어 있습니다. 다른 소셜 계정을 연동하거나 기존 계정으로 로그인해 주세요.",
+  reauth_user_mismatch: "현재 로그인된 계정에 연동된 소셜 계정과 일치하지 않습니다.",
+  google_oauth_pending: "구글 소셜 계정 연동은 준비 중입니다. 현재는 네이버 소셜 계정 연동을 지원합니다.",
+};
+
 export default function AccountManagementCard({ userName, onLogout, onProfileUpdate }) {
   const [methods, setMethods] = useState(null);
 
@@ -59,14 +73,7 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
         setSuccessMsg(`${provLabel} 계정 연동이 완료되었습니다.`);
         window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");
       } else if (errParam) {
-        let msg = `인증 오류: ${errParam}`;
-        if (errParam === "already_linked_to_other_user") {
-          msg = "해당 소셜 계정은 이미 다른 사용자의 계정에 연동되어 있습니다. 다른 소셜 계정을 연동하거나 기존 계정으로 로그인해 주세요.";
-        } else if (errParam === "reauth_user_mismatch") {
-          msg = "현재 로그인된 계정에 연동된 소셜 계정과 일치하지 않습니다.";
-        } else if (errParam === "google_oauth_pending") {
-          msg = "구글 소셜 계정 연동은 준비 중입니다. 현재는 네이버 소셜 계정 연동을 지원합니다.";
-        }
+        const msg = OAUTH_LINK_ERROR_MESSAGES[errParam] || "소셜 계정 인증에 실패했습니다. 다시 시도해 주세요.";
         setCardError(msg);
         setTimeout(() => setCardError(""), 6000);
         window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");

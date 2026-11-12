@@ -882,9 +882,15 @@ class TestGoogleOAuthFlows:
         client = TestClient(app)
 
         with patch.dict("os.environ", {"USE_MOCK_OAUTH": "false", "ENV": "development"}, clear=False):
-            # 1. Missing state
+            # 1. Missing state -> redirects to frontend with error=missing_state
             res = client.get("/auth/v2/oauth/google/callback?code=abc", follow_redirects=False)
-            assert res.status_code == 422
+            assert res.status_code in (302, 307)
+            assert "error=missing_state" in res.headers["location"]
+
+            # 1-1. Completely empty query params -> redirects with error=missing_state
+            res_empty = client.get("/auth/v2/oauth/google/callback", follow_redirects=False)
+            assert res_empty.status_code in (302, 307)
+            assert "error=missing_state" in res_empty.headers["location"]
 
             # 2. State not found in DB
             fake_conn.cursor_obj.fetchone_val = None
@@ -1012,11 +1018,17 @@ class TestGoogleOAuthFlows:
             "GOOGLE_CLIENT_ID": "mock_google_id",
             "GOOGLE_CLIENT_SECRET": "mock_google_secret",
         }, clear=False):
-            # 1. User denied consent
+            # 1. User denied consent (with state)
             res = client.get("/auth/v2/oauth/google/callback?state=dummy_state&error=access_denied", follow_redirects=False)
             assert res.status_code in (302, 307)
             assert "error=access_denied" in res.headers["location"]
             # No state lookup or updates made
+            assert len(fake_conn.cursor_obj.executed_queries) == 0
+
+            # 1-1. User denied consent (without state)
+            res_no_state = client.get("/auth/v2/oauth/google/callback?error=access_denied", follow_redirects=False)
+            assert res_no_state.status_code in (302, 307)
+            assert "error=access_denied" in res_no_state.headers["location"]
             assert len(fake_conn.cursor_obj.executed_queries) == 0
 
             # 2. Token request failed (HTTP 400 from Google)
@@ -1335,6 +1347,113 @@ class TestAuthenticatedOAuthUrlEndpoint:
             )
             assert claims["purpose"] == "password_add"
             assert claims["user_id"] == 42
+
+    def test_oauth_callback_state_safety_and_regression_matrix(self):
+        """
+        Regression matrix testing all 7 callback state & error handling scenarios:
+        1. Callback without state: safe redirect with error=missing_state (no raw 422 JSON)
+        2. Valid state and code: successful login flow
+        3. Expired state: error redirect with error=state_expired
+        4. Already consumed state: error redirect with error=state_already_consumed
+        5. State mismatch / not found: error redirect with error=state_not_found
+        6. Provider error (e.g. error=access_denied): safe redirect preserving error
+        7. State present without code: safe redirect with error=missing_auth_code
+        """
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import MagicMock, AsyncMock
+
+        fake_conn = FakeConnection()
+        router = create_auth_router(lambda: fake_conn)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "false",
+            "ENV": "development",
+            "GOOGLE_CLIENT_ID": "mock_client_id",
+            "GOOGLE_CLIENT_SECRET": "mock_client_secret",
+            "GOOGLE_CALLBACK_URL": "https://api.overloader.cloud/auth/v2/oauth/google/callback",
+        }, clear=False):
+            # 1. State missing: must redirect to frontend with error=missing_state, NEVER 422 JSON
+            res1 = client.get("/auth/v2/oauth/google/callback", follow_redirects=False)
+            assert res1.status_code in (302, 307)
+            assert "error=missing_state" in res1.headers["location"]
+
+            res1_with_code = client.get("/auth/v2/oauth/google/callback?code=some_code", follow_redirects=False)
+            assert res1_with_code.status_code in (302, 307)
+            assert "error=missing_state" in res1_with_code.headers["location"]
+
+            # 2. State mismatch / not found
+            fake_conn.cursor_obj.fetchone_val = None
+            res2 = client.get("/auth/v2/oauth/google/callback?state=unknown_random_state&code=some_code", follow_redirects=False)
+            assert res2.status_code in (302, 307)
+            assert "error=state_not_found" in res2.headers["location"]
+
+            # 3. Expired state
+            past = datetime.now(timezone.utc) - timedelta(minutes=5)
+            fake_conn.cursor_obj.fetchone_val = (10, None, "sess_exp", "login", "google", None, past)
+            res3 = client.get("/auth/v2/oauth/google/callback?state=expired_state&code=some_code", follow_redirects=False)
+            assert res3.status_code in (302, 307)
+            assert "error=state_expired" in res3.headers["location"]
+
+            # 4. Already consumed state
+            exp = datetime.now(timezone.utc) + timedelta(minutes=5)
+            consumed = datetime.now(timezone.utc) - timedelta(minutes=1)
+            fake_conn.cursor_obj.fetchone_val = (11, None, "sess_cons", "login", "google", consumed, exp)
+            res4 = client.get("/auth/v2/oauth/google/callback?state=consumed_state&code=some_code", follow_redirects=False)
+            assert res4.status_code in (302, 307)
+            assert "error=state_already_consumed" in res4.headers["location"]
+
+            # 5. External error from provider (e.g. error=access_denied) with or without state
+            res5_no_state = client.get("/auth/v2/oauth/google/callback?error=access_denied", follow_redirects=False)
+            assert res5_no_state.status_code in (302, 307)
+            assert "error=access_denied" in res5_no_state.headers["location"]
+
+            res5_with_state = client.get("/auth/v2/oauth/google/callback?state=dummy&error=access_denied", follow_redirects=False)
+            assert res5_with_state.status_code in (302, 307)
+            assert "error=access_denied" in res5_with_state.headers["location"]
+
+            # 6. State present but code missing
+            valid_exp = datetime.now(timezone.utc) + timedelta(minutes=5)
+            fake_conn.cursor_obj.fetchone_val = (12, None, "sess_valid", "login", "google", None, valid_exp)
+            res6 = client.get("/auth/v2/oauth/google/callback?state=valid_state", follow_redirects=False)
+            assert res6.status_code in (302, 307)
+            assert "error=missing_auth_code" in res6.headers["location"]
+
+            # 7. Valid state and code (mock enabled for full end-to-end exchange verification)
+            with patch.dict("os.environ", {"USE_MOCK_OAUTH": "true", "ENV": "development"}, clear=False):
+                class FullFlowCursor(FakeCursor):
+                    def __init__(self):
+                        super().__init__()
+                        self.step = 0
+                    def fetchone(self):
+                        self.step += 1
+                        if self.step == 1:
+                            # State lookup
+                            return (13, None, "sess_flow", "login", "google", None, valid_exp)
+                        elif self.step == 2:
+                            # Social account lookup (existing)
+                            return (100, 50, "test_email@example.com")
+                        elif self.step == 3:
+                            # User token_version
+                            return (1,)
+                        return None
+
+                flow_conn = FakeConnection(FullFlowCursor())
+                flow_router = create_auth_router(lambda: flow_conn)
+                flow_app = FastAPI()
+                flow_app.include_router(flow_router)
+                flow_client = TestClient(flow_app)
+
+                res7 = flow_client.get(
+                    "/auth/v2/oauth/google/callback?state=valid_state&mock_code=code123&mock_uid=sub_50",
+                    follow_redirects=False
+                )
+                assert res7.status_code in (302, 307)
+                assert "code=" in res7.headers["location"]
+                assert "session_id=" in res7.headers["location"]
+                assert "error=" not in res7.headers["location"]
 
     def test_consistent_profile_across_password_login_oauth_exchange_and_get_me(self):
         """

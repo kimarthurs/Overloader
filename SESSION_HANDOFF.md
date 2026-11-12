@@ -1,15 +1,15 @@
 # Overloader UI 리디자인 세션 인계 문서 (SESSION_HANDOFF.md)
 
-작성 일시: 2026-11-05 17:45 (로컬 시간)  
-현재 작업 브랜치: `feature/phase1-ui-cleanup-and-graphs` (미커밋 변경 보존 중)  
-기반 커밋: `43cc325` (`docs: finalize SESSION_HANDOFF.md with production deployment status` on `main`)  
-운영 배포 커밋: `43cc325` (main 브랜치 최신 상태 유지)  
+작성 일시: 2026-11-12 16:25 (로컬 시간)  
+현재 작업 브랜치: `main` (운영 배포 및 동기화 완료)  
+기반 커밋: `789dcaeb7611af2be1b6beee87a6f2c3fa77a0d4` (`789dcae`)  
+운영 배포 커밋: `789dcae` (백엔드 Ubuntu Docker 컨테이너 및 Vercel 프론트엔드 최신 반영)  
 리디자인 시작 전 원본 기준 커밋: `e43fa5669793a4e18e59cf9bdcddd21c0d5a020b`  
 원격 보존 브랜치:
   * `backup/pre-redesign`: `e43fa56` (리디자인 시작 전 원본 고정 브랜치)
   * `backup/prod-pre-redesign-20261105`: `e43fa56` (배포 직전 main 원본 안전 백업)
-  * `feature/redesign-shell-home`: `2618b00` (작업 브랜치)
-  * `main`: `2618b00` (운영 반영 브랜치)
+  * `feature/phase1-ui-cleanup-and-graphs`: `789dcae` (검증 및 원격 보존 브랜치)
+  * `main`: `789dcae` (운영 최신 배포 브랜치)
 운영 접속 주소: `https://app.overloader.cloud` / `https://overloader.vercel.app`
 
 ---
@@ -644,12 +644,81 @@ un_step_d_local_tests.ps1 -TestOnly)와, 이번 단위/통합 테스트에서 �
       - 프론트엔드 테스트: **11 passed, 0 failed** (`react-scripts test`, 세션 불일치 CanceledError 거절, 구 세션 401 신규 세션 격리, 현재 세션 401 만료 흐름 유지, 로그아웃 후 지연 401 정리 등 총 4개 엣지 케이스 회귀 검증 완료).
       - 프론트엔드 프로덕션 빌드: `npm run build` 컴파일 성공 (`Compiled successfully`).
       - 백엔드 테스트: **91 passed, 0 failed, 0 skipped** 유지.
-      - *(운영 환경 상태: 본 변경 및 Step D 스키마는 로컬 환경 검증 완료 상태이며, 실제 운영 DB 및 프로덕션 서버에는 아직 미적용 상태 유지)*
+      - *(형상 관리: 커밋 `789dcae`로 main 및 원격 반영 완료)*
       - *(개인 이메일·아이디·토큰·비밀값 등 일체 미포함)*
 
-22. **향후 잔여 작업 (Next Steps)**:
-    - 2개 이상 연결된 계정에서 마지막 수단 도움말이 숨겨지는지 및 네이버/비밀번호 단독 계정 UI 재확인.
-    - 운영 DB 마이그레이션 직전 최신 pg_dump 백업 생성 및 무결성 확인.
-    - 운영 DB에 Step D 마이그레이션(`step_d_production.sql`) 적용 및 사후 검증.
-    - 운영 백엔드(`api.overloader.cloud`) 및 프론트엔드(Vercel) 배포.
-    - 배포 후 첫 30분 핵심 스모크 테스트 수행.
+22. **Step D 프로덕션 운영 배포 및 스모크 테스트 완료 (2026-11-12)**:
+    * **운영 Azure DB 마이그레이션 (`step_d_production.sql`) 적용 완료**:
+      - 마이그레이션 직전 전체 백업 파일 생성 및 무결성 검증 완료 (`overloaderdb_prod_pre_stepd_20261112_143552.dump`, 123,321 bytes, `pg_restore --list` 244개 TOC 및 users/workout_logs 데이터 무결 확인).
+      - `users.token_version` 컬럼 추가 완료 (`integer NOT NULL DEFAULT 1`).
+      - 기존 사용자 전체(4명)의 `token_version` 값 NULL 없이 1로 적용 확인 (`NULL` 0건, `!= 1` 0건).
+      - `auth_single_use_tokens` 단회용 토큰 스토어 테이블 생성 완료.
+      - 인덱스 4종 생성 확인: `auth_single_use_tokens_pkey` (PK), `auth_single_use_tokens_token_hash_key` (Unique), `idx_auth_single_use_tokens_exp`, `idx_auth_single_use_tokens_user`.
+      - **기존 데이터 보존**: `users` 4명, `workout_logs` 2,537건, `social_accounts` 4건 (Google 4건), `password_credentials` 0건 완전 보존 (데이터 유실·변조 0건).
+    * **운영 백엔드 서버 (`ubuntu@129.154.58.3`) 재배포 완료**:
+      - 서버 `.env` 타임스탬프 백업(`chmod 600`) 및 Step D 필수 환경 변수(`GOOGLE_CALLBACK_URL`, `NAVER_CALLBACK_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_SSLMODE`, `FRONTEND_URL`, `BACKEND_URL`, `USE_MOCK_OAUTH=false`) 안전 보완.
+      - `docker compose config` 환경 변수 전달 및 구문 검증 완료.
+      - `789dcae` 커밋 체크아웃 후 `docker compose up -d --build api` 성공.
+      - 컨테이너 상태: `overloader-api` **`Up (healthy)`** (127.0.0.1:8000).
+      - 엔드포인트 응답 검증: `/docs` **HTTP 200 OK**, 비인증 `/last-workout` **HTTP 401 Unauthorized** 확인.
+      - 백엔드 컨테이너 로그: 기동 오류, DB 연결 실패, 500 서버 에러 0건 유지.
+    * **운영 프론트엔드 (Vercel) 프로덕션 배포 완료**:
+      - 로컬 `main` 브랜치로 `789dcae` Fast-forward 병합 및 `origin/main` push 완료 (`43cc325..789dcae`).
+      - Vercel CI/CD 자동 빌드 성공 및 최신 번들 **`main.30d03474.js`** 라이브 서빙 확인 (`https://app.overloader.cloud`, `https://overloader.vercel.app`).
+    * **운영 환경 스모크 테스트 결과**:
+      - `https://app.overloader.cloud` 접속 200 OK 및 셸 정상 렌더링.
+      - Google OAuth authorize GET 호출 시 `https://accounts.google.com/o/oauth2/v2/auth`로 307 임시 리디렉션 확인.
+      - Naver OAuth authorize GET 호출 시 `https://nid.naver.com/oauth2.0/authorize`로 307 임시 리디렉션 확인.
+      - 비밀번호 로그인 `/auth/v2/login` 미등록 호출 시 500 없이 401 Unauthorized 정상 반환.
+      - 보호 API `/last-workout` 비인증 호출 시 401 Unauthorized 차단 유지.
+      - 백엔드 최근 로그에 500 Internal Server Error 및 DB 예외 0건 확인.
+      - **롤백 필요 여부**: 불필요 (No Rollback Needed).
+    * **⚠️ 검증 범위의 엄격한 한정 (확대 해석 금지)**:
+      - **확인 완료 사항**: 운영 DB 스키마 반영 및 데이터 보존, 백엔드 컨테이너 healthy, Vercel 최신 번들 배포, OAuth authorize 307 리디렉션, 보호 API 401 차단, 미등록 비밀번호 401 반환.
+      - **사용자 실사용 확인 대상 (미검증 상태 유지)**:
+        1. 실제 브라우저 환경에서 사용자가 직접 Google / Naver / 비밀번호로 로그인하여 세션이 정상 진입하는지 여부.
+        2. 로그인 성공 후 대시보드에서 기존 2,537건 운동 기록이 정상 로딩되는지 여부.
+        3. 설정(`SettingsScreen`) > 계정 관리 카드에서 Google·네이버·비밀번호 3개 연동 상태가 의도대로 표시되는지 여부.
+        4. 단일 로그인 수단 보유 시 해제 버튼 비활성화 및 마지막 수단 보호 UI 문구가 정상 노출되는지 여부.
+        5. 브라우저 실사용 중 개발자 도구 콘솔에 예기치 않은 오류가 발생하지 않는지 여부.
+      - 배포 완료를 “모든 사용자 시나리오의 완전 검증”으로 확대 해석하지 않고 엄격히 구분함.
+    * *(개인 이메일·아이디·토큰·비밀값 등 일체 미포함)*
+
+23. **OAuth 콜백 state 누락 및 외부 에러 처리 개선 / 프론트엔드 화이트리스트 매핑 (2026-11-12)**:
+    * **배경 및 원인 분석**:
+      - Google OAuth 콜백 엔드포인트(`/auth/v2/oauth/{provider}/callback`)의 `state` 파라미터가 필수(`Query(...)`)로 선언되어 있어, `state` 파라미터가 누락된 요청(직접 URL 접근 등) 수신 시 FastAPI 자체 유효성 검사 실패로 원시 422 Unprocessable Entity JSON (`{"detail":[{"type":"missing","loc":["query","state"],"msg":"Field required"}]}`)이 브라우저에 그대로 반환되는 문제 발생.
+      - 또한 프론트엔드(`AuthScreen.jsx`, `AccountManagementCard.jsx`)에서 URL의 `error` 쿼리 파라미터를 처리할 때 세부 에러 코드가 매핑되지 않고 템플릿 리터럴로 원시 문자열을 직접 보간하여 사용자 경험 저해 및 잠재적 XSS 위험이 존재함.
+    * **백엔드 구현 개선 내역 (`backend/auth_router.py`)**:
+      - `oauth_callback`의 `state` 매개변수를 `Optional[str] = Query(None)`으로 변경하여 프레임워크 수준의 422 예외 방지.
+      - **누락 처리**: `state` 누락 시 로그인 처리나 세션 생성을 절대 진행하지 않고, 프론트엔드 로그인 URL로 `error=missing_state` 안전 리디렉션(307) 처리.
+      - **보안 검증 보존**: 기존의 SHA-256 해시 기반 DB `oauth_state` 조회, 발급 목적(login/link/reauth) 대조, 세션 ID 일치 검증, 5분 만료 검사, 단회성(1회) 소비 처리 및 재사용 원천 차단 로직은 100% 온전하게 유지.
+      - **외부 공급자 에러 안전 전달**: Google 등 외부 공급자로부터 `error` 또는 `error_description`(예: `access_denied`) 수신 시 `re.sub(r"[^\w\-_.: ]", "", ...)` 및 `quote_plus`로 안전하게 정제/인코딩하여 프론트엔드로 리디렉션 전달 (임의 HTML/JS 및 PII 삽입 방어).
+    * **프론트엔드 구현 개선 내역 (`AuthScreen.jsx`, `AccountManagementCard.jsx`)**:
+      - 허용된 에러 코드만 안전한 한국어 안내 문구로 변환하는 화이트리스트 딕셔너리(`OAUTH_ERROR_MESSAGES`, `OAUTH_LINK_ERROR_MESSAGES`) 도입:
+        - `missing_state`: "인증 상태가 올바르지 않아요. 다시 로그인해 주세요."
+        - `access_denied`: "소셜 로그인이 취소되었어요."
+        - `state_expired`: "로그인 요청이 만료되었어요. 다시 시도해 주세요."
+        - `state_already_consumed`: "이미 처리된 로그인 요청이에요. 다시 시도해 주세요."
+        - `state_not_found`: "인증 요청을 찾을 수 없어요. 다시 시도해 주세요."
+        - `provider_mismatch`: "인증 제공자 정보가 올바르지 않아요."
+        - `missing_auth_code`: "소셜 인증 정보가 올바르지 않아요. 다시 시도해 주세요."
+        - `google_oauth_pending`: 기존 안내 문구 유지.
+        - 알 수 없는 임의 코드(Fallback): `"소셜 로그인에 실패했어요. 다시 시도해 주세요."`로 안전하게 치환.
+      - 원시 파라미터 값의 DOM 직접 삽입을 완전히 배제하고, 에러 알림 배너(`role="alert"`) 노출 시에도 로그인 폼 및 소셜 로그인 인터랙션이 정상 동작하도록 보장.
+      - 수신 후 `window.history.replaceState`로 URL 쿼리 파라미터 즉시 정리.
+    * **테스트 및 빌드 검증 결과**:
+      - 백엔드 테스트: **92 passed, 8 skipped, 0 failed** (`pytest tests/`, `test_oauth_callback_state_safety_and_regression_matrix` 포함 7종 회귀 시나리오 전건 통과).
+      - 프론트엔드 테스트: **11 passed, 0 failed** (`npm test`, 11개 전건 통과).
+      - 프론트엔드 프로덕션 빌드: **성공** (`npm run build`, `Compiled successfully`, 번들 생성 완료).
+    * **⚠️ 운영 반영 현황**:
+      - **운영 배포에는 아직 반영되지 않음 (로컬 작업 공간 검증 완료 상태)**.
+      - 운영 서버는 현재 기존 커밋 `789dcae` 상태로 안전하게 가동 중이며, 운영 DB 접속·변경 및 Git push는 미실행.
+    * *(개인 이메일·아이디·토큰·비밀값 등 일체 미포함)*
+
+24. **향후 잔여 작업 및 사용자 실사용 확인 (Next Steps)**:
+    - [ ] 사용자 브라우저에서 `https://app.overloader.cloud` 접속 후 Google 로그인 실동작 확인.
+    - [ ] 로그인 후 홈/기록 화면에서 기존 운동 기록 정상 표시 확인.
+    - [ ] 브라우저 새로고침(F5) 시 세션이 안정적으로 유지되는지 확인.
+    - [ ] 설정 화면에서 네이버 계정 연동 및 비밀번호 등록 흐름 실동작 확인.
+    - [ ] 마지막 로그인 수단 해제 방지 UI 문구 및 비활성화 툴팁 실동작 확인.
+    - [ ] 2개 이상 로그인 수단 연동 시 해제 버튼 활성화 및 마지막 수단 알림 배너 숨김 동작 확인.
