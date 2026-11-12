@@ -365,6 +365,11 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
               <div style={{ fontSize: 12, color: "var(--sub)" }}>
                 {methods?.has_password ? `@${methods.username}` : "미등록 (소셜 로그인만 사용 중)"}
               </div>
+              {methods?.has_password && methods?.total_methods <= 1 && (
+                <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 4, lineHeight: 1.4 }}>
+                  마지막 로그인 수단은 해제할 수 없습니다.<br />다른 로그인 수단을 먼저 추가해 주세요.
+                </div>
+              )}
             </div>
           </div>
 
@@ -378,22 +383,27 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
                 >
                   비밀번호 변경
                 </button>
-                <button
-                  type="button"
-                  disabled={!methods.can_unlink_password}
-                  onClick={() => {
-                    setUnlinkConfirmTarget({ type: "password" });
-                    setModalError("");
-                  }}
-                  style={{
-                    ...styles.btnSmallDanger,
-                    opacity: methods.can_unlink_password ? 1 : 0.4,
-                    cursor: methods.can_unlink_password ? "pointer" : "not-allowed"
-                  }}
-                  title={methods.can_unlink_password ? "비밀번호 해제" : "마지막 로그인 수단은 해제할 수 없습니다"}
+                <span
+                  style={{ display: "inline-block" }}
+                  title={!methods.can_unlink_password ? "마지막 로그인 수단은 해제할 수 없습니다" : undefined}
                 >
-                  해제
-                </button>
+                  <button
+                    type="button"
+                    disabled={!methods.can_unlink_password}
+                    onClick={() => {
+                      setUnlinkConfirmTarget({ type: "password" });
+                      setModalError("");
+                    }}
+                    style={{
+                      ...styles.btnSmallDanger,
+                      opacity: methods.can_unlink_password ? 1 : 0.4,
+                      cursor: methods.can_unlink_password ? "pointer" : "not-allowed"
+                    }}
+                    title={methods.can_unlink_password ? "비밀번호 해제" : "마지막 로그인 수단은 해제할 수 없습니다"}
+                  >
+                    해제
+                  </button>
+                </span>
               </>
             ) : (
               <button
@@ -418,27 +428,37 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
               <div style={{ fontSize: 12, color: "var(--sub)" }}>
                 {googleAcc ? (googleAcc.email || "연동 완료") : "미연동"}
               </div>
+              {googleAcc && methods?.total_methods <= 1 && (
+                <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 4, lineHeight: 1.4 }}>
+                  마지막 로그인 수단은 해제할 수 없습니다.<br />다른 로그인 수단을 먼저 추가해 주세요.
+                </div>
+              )}
             </div>
           </div>
 
           <div>
             {googleAcc ? (
-              <button
-                type="button"
-                disabled={!methods?.can_unlink_social}
-                onClick={() => {
-                  setUnlinkConfirmTarget({ type: "social", provider: "google" });
-                  setModalError("");
-                }}
-                style={{
-                  ...styles.btnSmallDanger,
-                  opacity: methods?.can_unlink_social ? 1 : 0.4,
-                  cursor: methods?.can_unlink_social ? "pointer" : "not-allowed"
-                }}
-                title={methods?.can_unlink_social ? "Google 연동 해제" : "마지막 로그인 수단은 해제할 수 없습니다"}
+              <span
+                style={{ display: "inline-block" }}
+                title={!methods?.can_unlink_social ? "마지막 로그인 수단은 해제할 수 없습니다" : undefined}
               >
-                연동 해제
-              </button>
+                <button
+                  type="button"
+                  disabled={!methods?.can_unlink_social}
+                  onClick={() => {
+                    setUnlinkConfirmTarget({ type: "social", provider: "google" });
+                    setModalError("");
+                  }}
+                  style={{
+                    ...styles.btnSmallDanger,
+                    opacity: methods?.can_unlink_social ? 1 : 0.4,
+                    cursor: methods?.can_unlink_social ? "pointer" : "not-allowed"
+                  }}
+                  title={methods?.can_unlink_social ? "Google 연동 해제" : "마지막 로그인 수단은 해제할 수 없습니다"}
+                >
+                  연동 해제
+                </button>
+              </span>
             ) : (
               <button
                 type="button"
@@ -462,27 +482,37 @@ export default function AccountManagementCard({ userName, onLogout, onProfileUpd
               <div style={{ fontSize: 12, color: "var(--sub)" }}>
                 {naverAcc ? (naverAcc.email || "연동 완료") : "미연동"}
               </div>
+              {naverAcc && methods?.total_methods <= 1 && (
+                <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 4, lineHeight: 1.4 }}>
+                  마지막 로그인 수단은 해제할 수 없습니다.<br />다른 로그인 수단을 먼저 추가해 주세요.
+                </div>
+              )}
             </div>
           </div>
 
           <div>
             {naverAcc ? (
-              <button
-                type="button"
-                disabled={!methods?.can_unlink_social}
-                onClick={() => {
-                  setUnlinkConfirmTarget({ type: "social", provider: "naver" });
-                  setModalError("");
-                }}
-                style={{
-                  ...styles.btnSmallDanger,
-                  opacity: methods?.can_unlink_social ? 1 : 0.4,
-                  cursor: methods?.can_unlink_social ? "pointer" : "not-allowed"
-                }}
-                title={methods?.can_unlink_social ? "네이버 연동 해제" : "마지막 로그인 수단은 해제할 수 없습니다"}
+              <span
+                style={{ display: "inline-block" }}
+                title={!methods?.can_unlink_social ? "마지막 로그인 수단은 해제할 수 없습니다" : undefined}
               >
-                연동 해제
-              </button>
+                <button
+                  type="button"
+                  disabled={!methods?.can_unlink_social}
+                  onClick={() => {
+                    setUnlinkConfirmTarget({ type: "social", provider: "naver" });
+                    setModalError("");
+                  }}
+                  style={{
+                    ...styles.btnSmallDanger,
+                    opacity: methods?.can_unlink_social ? 1 : 0.4,
+                    cursor: methods?.can_unlink_social ? "pointer" : "not-allowed"
+                  }}
+                  title={methods?.can_unlink_social ? "네이버 연동 해제" : "마지막 로그인 수단은 해제할 수 없습니다"}
+                >
+                  연동 해제
+                </button>
+              </span>
             ) : (
               <button
                 type="button"
