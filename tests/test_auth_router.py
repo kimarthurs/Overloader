@@ -1455,6 +1455,188 @@ class TestAuthenticatedOAuthUrlEndpoint:
                 assert "session_id=" in res7.headers["location"]
                 assert "error=" not in res7.headers["location"]
 
+    def test_oauth_callback_target_redirect_resolution_and_security_matrix(self):
+        """
+        Regression test: FRONTEND_URL environment resolution, origin whitelisting,
+        open redirect rejection, Google & Naver parity, exchange_code/session_id preservation,
+        and state validation retention.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        valid_exp = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+        class StepCursor(FakeCursor):
+            def __init__(self, purpose="login", provider="google", user_id=None, consumed=False, expired=False):
+                super().__init__()
+                self.purpose = purpose
+                self.provider = provider
+                self.user_id = user_id
+                self.consumed = consumed
+                self.expired = expired
+                self.call_count = 0
+
+            def fetchone(self):
+                self.call_count += 1
+                if self.call_count == 1:
+                    exp = datetime.now(timezone.utc) - timedelta(minutes=5) if self.expired else valid_exp
+                    cons = datetime.now(timezone.utc) - timedelta(minutes=1) if self.consumed else None
+                    return (99, self.user_id, "sess_test_123", self.purpose, self.provider, cons, exp)
+                elif self.call_count == 2:
+                    if self.purpose == "login":
+                        # Social account lookup (existing account)
+                        return (101, 77, "user@example.com")
+                    elif self.purpose == "link":
+                        # social account lookup -> None (no other user has it)
+                        return None
+                    elif self.purpose == "reauth":
+                        # Reauth social account lookup -> matches user
+                        return (1,)
+                elif self.call_count == 3:
+                    if self.purpose == "login":
+                        # users.token_version
+                        return (1,)
+                    elif self.purpose == "reauth":
+                        # token_version for reauth ticket
+                        return (1,)
+                return None
+
+        # 1. FRONTEND_URL is production and redirect_uri is None -> redirects to https://app.overloader.cloud
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "true",
+            "ENV": "development",
+            "FRONTEND_URL": "https://app.overloader.cloud",
+        }, clear=False):
+            conn1 = FakeConnection(StepCursor(purpose="login", provider="google"))
+            client1 = TestClient(FastAPI())
+            client1.app.include_router(create_auth_router(lambda: conn1))
+
+            res1 = client1.get(
+                "/auth/v2/oauth/google/callback?state=st1&mock_code=m1&mock_uid=u1",
+                follow_redirects=False
+            )
+            assert res1.status_code in (302, 307)
+            loc1 = res1.headers["location"]
+            assert loc1.startswith("https://app.overloader.cloud?")
+            assert "exchange_code=" in loc1
+            assert "session_id=sess_test_123" in loc1
+            assert "http://127.0.0.1:3000" not in loc1
+
+            # 1-1. Missing state with FRONTEND_URL configured redirects to FRONTEND_URL with error=missing_state
+            res1_missing = client1.get("/auth/v2/oauth/google/callback", follow_redirects=False)
+            assert res1_missing.status_code in (302, 307)
+            assert res1_missing.headers["location"].startswith("https://app.overloader.cloud?error=missing_state")
+
+        # 2. purpose=link or reauth with FRONTEND_URL configured -> redirects to https://app.overloader.cloud?tab=settings
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "true",
+            "ENV": "development",
+            "FRONTEND_URL": "https://app.overloader.cloud",
+        }, clear=False):
+            # 2-1. purpose=link
+            conn2 = FakeConnection(StepCursor(purpose="link", provider="google", user_id=77))
+            client2 = TestClient(FastAPI())
+            client2.app.include_router(create_auth_router(lambda: conn2))
+            res2 = client2.get(
+                "/auth/v2/oauth/google/callback?state=st2&mock_code=m2&mock_uid=u2",
+                follow_redirects=False
+            )
+            assert res2.status_code in (302, 307)
+            loc2 = res2.headers["location"]
+            assert loc2.startswith("https://app.overloader.cloud?tab=settings")
+            assert "status=link_success" in loc2
+            assert "provider=google" in loc2
+
+            # 2-2. purpose=reauth
+            conn2_reauth = FakeConnection(StepCursor(purpose="reauth", provider="google", user_id=77))
+            client2_reauth = TestClient(FastAPI())
+            client2_reauth.app.include_router(create_auth_router(lambda: conn2_reauth))
+            res2_reauth = client2_reauth.get(
+                "/auth/v2/oauth/google/callback?state=st2r&mock_code=m2r&mock_uid=u2r",
+                follow_redirects=False
+            )
+            assert res2_reauth.status_code in (302, 307)
+            loc2_reauth = res2_reauth.headers["location"]
+            assert loc2_reauth.startswith("https://app.overloader.cloud?tab=settings")
+            assert "ticket=" in loc2_reauth
+            assert "session_id=sess_test_123" in loc2_reauth
+
+        # 3. Allowed local origin in redirect_uri -> uses that exact origin
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "true",
+            "ENV": "development",
+            "FRONTEND_URL": "https://app.overloader.cloud",
+        }, clear=False):
+            conn3 = FakeConnection(StepCursor(purpose="login", provider="google"))
+            client3 = TestClient(FastAPI())
+            client3.app.include_router(create_auth_router(lambda: conn3))
+            res3 = client3.get(
+                "/auth/v2/oauth/google/callback?state=st3&mock_code=m3&mock_uid=u3&redirect_uri=http://localhost:3000",
+                follow_redirects=False
+            )
+            assert res3.status_code in (302, 307)
+            loc3 = res3.headers["location"]
+            assert loc3.startswith("http://localhost:3000?")
+            assert "exchange_code=" in loc3
+
+        # 4. Unallowed external origin in redirect_uri -> safely rejected, converges to FRONTEND_URL (Open Redirect prevented)
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "true",
+            "ENV": "development",
+            "FRONTEND_URL": "https://app.overloader.cloud",
+        }, clear=False):
+            conn4 = FakeConnection(StepCursor(purpose="login", provider="google"))
+            client4 = TestClient(FastAPI())
+            client4.app.include_router(create_auth_router(lambda: conn4))
+            res4 = client4.get(
+                "/auth/v2/oauth/google/callback?state=st4&mock_code=m4&mock_uid=u4&redirect_uri=https://malicious-phishing.com/steal",
+                follow_redirects=False
+            )
+            assert res4.status_code in (302, 307)
+            loc4 = res4.headers["location"]
+            assert loc4.startswith("https://app.overloader.cloud?")
+            assert "malicious-phishing.com" not in loc4
+
+        # 5. Naver callback parity -> applies exact same rules as Google
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "true",
+            "ENV": "development",
+            "FRONTEND_URL": "https://app.overloader.cloud",
+        }, clear=False):
+            conn5 = FakeConnection(StepCursor(purpose="login", provider="naver"))
+            client5 = TestClient(FastAPI())
+            client5.app.include_router(create_auth_router(lambda: conn5))
+            res5 = client5.get(
+                "/auth/v2/oauth/naver/callback?state=st5&mock_code=m5&mock_uid=u5",
+                follow_redirects=False
+            )
+            assert res5.status_code in (302, 307)
+            loc5 = res5.headers["location"]
+            assert loc5.startswith("https://app.overloader.cloud?")
+            assert "exchange_code=" in loc5
+            assert "session_id=sess_test_123" in loc5
+
+        # 6. Retention of state validation: expired, already consumed, not found
+        with patch.dict("os.environ", {
+            "USE_MOCK_OAUTH": "true",
+            "ENV": "development",
+            "FRONTEND_URL": "https://app.overloader.cloud",
+        }, clear=False):
+            # Consumed state
+            conn6_cons = FakeConnection(StepCursor(purpose="login", provider="google", consumed=True))
+            client6_cons = TestClient(FastAPI())
+            client6_cons.app.include_router(create_auth_router(lambda: conn6_cons))
+            res6_cons = client6_cons.get("/auth/v2/oauth/google/callback?state=st_c&code=c", follow_redirects=False)
+            assert "error=state_already_consumed" in res6_cons.headers["location"]
+            assert res6_cons.headers["location"].startswith("https://app.overloader.cloud?")
+
+            # Expired state
+            conn6_exp = FakeConnection(StepCursor(purpose="login", provider="google", expired=True))
+            client6_exp = TestClient(FastAPI())
+            client6_exp.app.include_router(create_auth_router(lambda: conn6_exp))
+            res6_exp = client6_exp.get("/auth/v2/oauth/google/callback?state=st_e&code=c", follow_redirects=False)
+            assert "error=state_expired" in res6_exp.headers["location"]
+            assert res6_exp.headers["location"].startswith("https://app.overloader.cloud?")
+
     def test_consistent_profile_across_password_login_oauth_exchange_and_get_me(self):
         """
         Regression test: Enforces that for the identical user_id (e.g. 42),

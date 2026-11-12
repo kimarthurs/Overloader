@@ -243,9 +243,47 @@ def is_safe_redirect_uri(uri: str) -> bool:
     try:
         parsed = urlparse(uri)
         origin = f"{parsed.scheme}://{parsed.netloc}"
-        return origin in ALLOWED_REDIRECT_ORIGINS
+        allowed = set(ALLOWED_REDIRECT_ORIGINS)
+        env_frontend = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+        if env_frontend:
+            try:
+                env_parsed = urlparse(env_frontend)
+                if env_parsed.scheme in ("http", "https") and env_parsed.netloc:
+                    allowed.add(f"{env_parsed.scheme}://{env_parsed.netloc}")
+            except Exception:
+                pass
+        return origin in allowed
     except Exception:
         return False
+
+
+def get_default_frontend_url(purpose: str = "login") -> str:
+    """
+    Returns the safe default frontend URL.
+    Prefers FRONTEND_URL environment variable if set and safe.
+    Defaults to http://127.0.0.1:3000 for local development.
+    Appends query parameters (?tab=settings) for link or reauth purposes.
+    """
+    env_frontend = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+    base = env_frontend if (env_frontend and is_safe_redirect_uri(env_frontend)) else "http://127.0.0.1:3000"
+    norm_purpose = (purpose or "login").strip().lower().split(":")[0]
+    if norm_purpose in ("link", "reauth"):
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}tab=settings"
+    return base
+
+
+def resolve_target_redirect(redirect_uri: Optional[str], purpose: str = "login") -> str:
+    """
+    Resolves a safe target redirect URL:
+    1. If redirect_uri is provided and belongs to ALLOWED_REDIRECT_ORIGINS, uses it.
+    2. Otherwise, securely falls back to get_default_frontend_url(purpose), preventing open redirects.
+    """
+    if redirect_uri:
+        stripped = redirect_uri.strip()
+        if is_safe_redirect_uri(stripped):
+            return stripped
+    return get_default_frontend_url(purpose)
 
 
 # ── 3. Router Factory & Dependency Injection ─────────────────────────────────────
@@ -984,9 +1022,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
         if purpose not in ("link", "reauth"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"지원하지 않는 목적입니다: {purpose}")
 
-        target_redirect = req.redirect_uri or "http://127.0.0.1:3000"
-        if not is_safe_redirect_uri(target_redirect):
-            target_redirect = "http://127.0.0.1:3000"
+        target_redirect = resolve_target_redirect(req.redirect_uri, purpose=purpose)
 
         bound_user_id = current_user["user_id"]
         sid = (req.session_id or current_user.get("session_id") or "").strip()
@@ -1098,9 +1134,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
         if purpose not in ("login", "link", "reauth"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"지원하지 않는 목적입니다: {purpose}")
 
-        target_redirect = redirect_uri or "http://127.0.0.1:3000"
-        if not is_safe_redirect_uri(target_redirect):
-            target_redirect = "http://127.0.0.1:3000"
+        target_redirect = resolve_target_redirect(redirect_uri, purpose=purpose)
 
         sid = (session_id or "").strip()
         if not sid:
@@ -1280,9 +1314,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
         handles login/link/reauth, and redirects to frontend.
         """
         provider = provider.strip().lower()
-        target_redirect = redirect_uri or "http://127.0.0.1:3000"
-        if not is_safe_redirect_uri(target_redirect):
-            target_redirect = "http://127.0.0.1:3000"
+        target_redirect = resolve_target_redirect(redirect_uri, purpose="login")
 
         # Strict production guard: forbid mock parameters in production or when mock disabled
         env_name = os.getenv("ENV", os.getenv("APP_ENV", "development")).lower()
@@ -1344,14 +1376,7 @@ def create_auth_router(get_connection_func, release_connection_func=None) -> API
                     saved_target_purpose = st_purpose.split(":", 1)[1] if (st_purpose and ":" in st_purpose) else None
                     effective_target_purpose = target_purpose or saved_target_purpose
 
-                    if redirect_uri and is_safe_redirect_uri(redirect_uri):
-                        target_redirect = redirect_uri
-                    elif base_purpose == "reauth" and effective_target_purpose == "password_add":
-                        target_redirect = "http://127.0.0.1:3000?tab=settings"
-                    elif base_purpose in ("link", "reauth"):
-                        target_redirect = "http://127.0.0.1:3000?tab=settings"
-                    else:
-                        target_redirect = "http://127.0.0.1:3000"
+                    target_redirect = resolve_target_redirect(redirect_uri, purpose=base_purpose)
 
                     sep = "&" if "?" in target_redirect else "?"
 
