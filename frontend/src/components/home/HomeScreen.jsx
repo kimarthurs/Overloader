@@ -122,7 +122,7 @@ export default function HomeScreen({ userName, onNavigateTab, showLastWorkout = 
           <div
             className="ui-card"
             style={{
-              background: "linear-gradient(135deg, rgba(249, 115, 22, 0.12) 0%, rgba(24, 24, 31, 0.95) 70%)",
+              background: "linear-gradient(135deg, var(--accent-bg) 0%, var(--card) 70%)",
               position: "relative",
               overflow: "hidden"
             }}
@@ -160,7 +160,7 @@ export default function HomeScreen({ userName, onNavigateTab, showLastWorkout = 
                 style={{
                   padding: "6px 14px",
                   borderRadius: "var(--radius-pill)",
-                  backgroundColor: "rgba(255, 255, 255, 0.06)",
+                  backgroundColor: "var(--card-subtle)",
                   border: "1px solid var(--border)",
                   fontSize: 12,
                   fontWeight: 600,
@@ -384,7 +384,7 @@ export default function HomeScreen({ userName, onNavigateTab, showLastWorkout = 
                       alignItems: "center",
                       justifyContent: "center",
                       cursor: hasActivity ? "pointer" : "default",
-                      backgroundColor: isToday ? "rgba(249, 115, 22, 0.15)" : "transparent",
+                      backgroundColor: isToday ? "var(--accent-bg)" : "transparent",
                       border: isToday ? "1px solid var(--accent)" : "1px solid transparent",
                       color: isToday ? "var(--accent)" : "var(--text)",
                       fontSize: 13,
